@@ -59,8 +59,8 @@ struct UsageWindowSnapshot: Codable {
 
 struct UsageSnapshot: Codable {
     let fetchedAt: Date
-    let fiveHour: UsageWindowSnapshot?
-    let weekly: UsageWindowSnapshot?
+    let primary: UsageWindowSnapshot?
+    let secondary: UsageWindowSnapshot?
     let error: String?
 }
 
@@ -526,15 +526,32 @@ private final class UsageBarsMenuView: NSView {
 final class UsageFetcher {
     private let endpoint = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
 
+    // A dedicated session that never stores or sends cookies and bypasses the
+    // HTTP cache. The usage endpoint sits behind Cloudflare and hands out a
+    // `__cflb` load-balancer cookie; persisting it (as URLSession.shared does)
+    // pins every refresh to one backend node that can report a stale usage
+    // percentage. Staying cookie-less keeps us in sync with the Codex CLI.
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.httpCookieAcceptPolicy = .never
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return URLSession(configuration: config)
+    }()
+
     func fetch(authURL: URL, completion: @escaping (UsageSnapshot) -> Void) {
         guard let auth = readAuth(authURL), let accessToken = auth.tokens?.accessToken else {
-            completion(UsageSnapshot(fetchedAt: Date(), fiveHour: nil, weekly: nil, error: "No Codex auth token"))
+            completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "No Codex auth token"))
             return
         }
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.timeoutInterval = 15
+        request.httpShouldHandleCookies = false
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("codex_desktop", forHTTPHeaderField: "originator")
         request.setValue("Codex Desktop/0.0 (Macintosh; Intel Mac OS X; arm64)", forHTTPHeaderField: "User-Agent")
@@ -544,30 +561,29 @@ final class UsageFetcher {
             request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        session.dataTask(with: request) { data, response, error in
             if let error {
-                completion(UsageSnapshot(fetchedAt: Date(), fiveHour: nil, weekly: nil, error: error.localizedDescription))
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: error.localizedDescription))
                 return
             }
 
             guard let http = response as? HTTPURLResponse else {
-                completion(UsageSnapshot(fetchedAt: Date(), fiveHour: nil, weekly: nil, error: "Invalid usage response"))
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "Invalid usage response"))
                 return
             }
 
             guard http.statusCode == 200, let data else {
-                completion(UsageSnapshot(fetchedAt: Date(), fiveHour: nil, weekly: nil, error: "HTTP \(http.statusCode)"))
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "HTTP \(http.statusCode)"))
                 return
             }
 
             do {
                 let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
-                let windows = [usage.rateLimit?.primaryWindow, usage.rateLimit?.secondaryWindow].compactMap { $0 }
-                let fiveHour = self.snapshot(from: windows, targetSeconds: 5 * 60 * 60)
-                let weekly = self.snapshot(from: windows, targetSeconds: 7 * 24 * 60 * 60)
-                completion(UsageSnapshot(fetchedAt: Date(), fiveHour: fiveHour, weekly: weekly, error: nil))
+                let primary = self.snapshot(from: usage.rateLimit?.primaryWindow)
+                let secondary = self.snapshot(from: usage.rateLimit?.secondaryWindow)
+                completion(UsageSnapshot(fetchedAt: Date(), primary: primary, secondary: secondary, error: nil))
             } catch {
-                completion(UsageSnapshot(fetchedAt: Date(), fiveHour: nil, weekly: nil, error: "Could not parse usage"))
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "Could not parse usage"))
             }
         }.resume()
     }
@@ -577,25 +593,15 @@ final class UsageFetcher {
         return try? JSONDecoder().decode(AuthFile.self, from: data)
     }
 
-    private func snapshot(from windows: [LimitWindowResponse], targetSeconds: Double) -> UsageWindowSnapshot? {
-        let candidates = windows.compactMap { window -> (LimitWindowResponse, Double)? in
-            guard let seconds = window.limitWindowSeconds else { return nil }
-            return (window, seconds)
-        }
-        guard let selected = candidates.min(by: { abs($0.1 - targetSeconds) < abs($1.1 - targetSeconds) }) else {
-            return nil
-        }
-
-        let tolerance = max(60, targetSeconds * 0.20)
-        guard abs(selected.1 - targetSeconds) <= tolerance else { return nil }
-
-        let used = selected.0.usedPercent ?? 0
+    private func snapshot(from window: LimitWindowResponse?) -> UsageWindowSnapshot? {
+        guard let window else { return nil }
+        let used = window.usedPercent ?? 0
         let remaining = min(max(100 - used, 0), 100)
         return UsageWindowSnapshot(
             usedPercent: used,
             remainingPercent: remaining,
-            resetAt: selected.0.resetAt,
-            windowSeconds: selected.1
+            resetAt: window.resetAt,
+            windowSeconds: window.limitWindowSeconds
         )
     }
 
@@ -935,10 +941,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func profileSubtitle(_ profile: String) -> String {
-        guard let snapshot = usageByProfile[profile], snapshot.error == nil else {
-            return "5h · --"
+        guard let snapshot = usageByProfile[profile], snapshot.error == nil, let primary = snapshot.primary else {
+            return "--"
         }
-        return "5h · \(formatPercent(snapshot.fiveHour?.remainingPercent))"
+        return "\(windowTitle(seconds: primary.windowSeconds)) · \(formatPercent(primary.remainingPercent))"
     }
 
     private func addUsageItems(to menu: NSMenu, snapshot: UsageSnapshot?) {
@@ -953,20 +959,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let windows = [snapshot.primary, snapshot.secondary].compactMap { $0 }
+        guard !windows.isEmpty else {
+            addDisabled("Usage: unavailable", to: menu)
+            addDisabled("Updated: \(formatDate(snapshot.fetchedAt))", to: menu)
+            return
+        }
+
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         item.view = UsageBarsMenuView(
-            rows: [
+            rows: windows.map { window in
                 UsageBarRow(
-                    title: "5hour",
-                    usedPercent: snapshot.fiveHour?.usedPercent,
-                    resetText: formatResetDistance(snapshot.fiveHour?.resetAt)
-                ),
-                UsageBarRow(
-                    title: "Weekly",
-                    usedPercent: snapshot.weekly?.usedPercent,
-                    resetText: formatResetDistance(snapshot.weekly?.resetAt)
+                    title: windowTitle(seconds: window.windowSeconds),
+                    usedPercent: window.usedPercent,
+                    resetText: formatResetDistance(window.resetAt)
                 )
-            ],
+            },
             updatedText: "Updated \(formatDate(snapshot.fetchedAt))",
             target: self,
             refreshAction: #selector(refreshNow)
@@ -990,10 +998,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let snapshot = usageByProfile[activeProfile]
-        button.title = " \(formatPercent(snapshot?.fiveHour?.remainingPercent))"
+        button.title = " \(formatPercent(snapshot?.primary?.remainingPercent))"
 
         if let snapshot, snapshot.error == nil {
-            button.toolTip = "\(activeProfile): 5h \(formatPercent(snapshot.fiveHour?.remainingPercent)), 1w \(formatPercent(snapshot.weekly?.remainingPercent))"
+            let parts = [snapshot.primary, snapshot.secondary].compactMap { window -> String? in
+                guard let window else { return nil }
+                return "\(windowTitle(seconds: window.windowSeconds)) \(formatPercent(window.remainingPercent))"
+            }
+            button.toolTip = parts.isEmpty
+                ? "\(activeProfile): usage unavailable"
+                : "\(activeProfile): \(parts.joined(separator: ", "))"
         } else {
             button.toolTip = "\(activeProfile): usage unavailable"
         }
@@ -1002,6 +1016,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func formatPercent(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "--" }
         return "\(Int(value.rounded()))%"
+    }
+
+    private func windowTitle(seconds: Double?) -> String {
+        guard let seconds, seconds.isFinite, seconds > 0 else { return "Usage" }
+        let days = seconds / 86_400
+        let hours = seconds / 3_600
+        if days >= 28 { return "Monthly" }
+        if days >= 6.5 { return "Weekly" }
+        if days >= 1.5 { return "\(Int(days.rounded()))d" }
+        if days >= 0.9 { return "Daily" }
+        if hours >= 1 { return "\(Int(hours.rounded()))h" }
+        let minutes = seconds / 60
+        return "\(max(Int(minutes.rounded()), 1))m"
     }
 
     private func formatResetDistance(_ epochSeconds: Double?) -> String {
