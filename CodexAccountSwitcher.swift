@@ -573,7 +573,8 @@ final class UsageFetcher {
             }
 
             guard http.statusCode == 200, let data else {
-                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "HTTP \(http.statusCode)"))
+                let message = Self.errorMessage(status: http.statusCode, body: data)
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: message))
                 return
             }
 
@@ -591,6 +592,36 @@ final class UsageFetcher {
     private func readAuth(_ url: URL) -> AuthFile? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(AuthFile.self, from: data)
+    }
+
+    // Turns a non-200 usage response into a message the user can act on. A 401
+    // means Codex's stored token (and often its whole session) was invalidated
+    // server-side, which is common for SSO/Team accounts; the only fix is to
+    // sign in to Codex again and re-capture the profile.
+    private static func errorMessage(status: Int, body: Data?) -> String {
+        let code = bodyErrorCode(body)
+        switch status {
+        case 401:
+            if code == "refresh_token_invalidated" {
+                return "Session ended — sign in to Codex again"
+            }
+            return "Sign in to Codex again"
+        case 403:
+            return "Account has no Codex access"
+        case 429:
+            return "Rate limited — try again later"
+        default:
+            return "HTTP \(status)"
+        }
+    }
+
+    private static func bodyErrorCode(_ body: Data?) -> String? {
+        guard let body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let error = json["error"] as? [String: Any] else {
+            return nil
+        }
+        return error["code"] as? String
     }
 
     private func snapshot(from window: LimitWindowResponse?) -> UsageWindowSnapshot? {
