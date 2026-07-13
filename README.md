@@ -27,7 +27,7 @@ It is useful when you regularly move between personal, work, or team Codex accou
 - Save the active profile before switching away
 - Restore `~/.codex/auth.json` for Codex CLI
 - Restore `~/Library/Application Support/Codex` for Codex Desktop
-- Show each saved profile's 5h and 1w Codex usage remaining from the official Codex usage endpoint
+- Show each saved profile's available Codex usage windows from the official Codex usage endpoint
 - Keep all profile data on your machine
 
 ## Project Structure
@@ -91,13 +91,13 @@ chmod +x build-app.sh codex-account-switcher.sh
 open "build/Codex Account Switcher.app"
 ```
 
-After launch, the menu bar item shows the switcher icon and the current profile's 5h remaining usage percentage.
+After launch, the menu bar item shows the switcher icon and the current profile's main remaining usage percentage.
 
 From the menu, you can:
 
 - Switch accounts with profile cards
 - Add a new saved profile with the plus button
-- View 5-hour and weekly usage bars for the active profile
+- View the active profile's available usage windows, including named supplemental limits when provided
 - Refresh usage from the menu
 - Open the profile data folder
 - Quit the switcher
@@ -187,7 +187,7 @@ Codex Account Switcher 会保存每个 profile 对应的 Codex CLI 登录态和 
 - 切换前自动保存当前 profile 的最新 Codex 状态
 - 恢复 Codex CLI 的 `~/.codex/auth.json`
 - 恢复 Codex Desktop 的 `~/Library/Application Support/Codex`
-- 通过 Codex 官方用量接口展示每个已保存 profile 的 5 小时和 1 周剩余额度
+- 通过 Codex 官方用量接口展示每个已保存 profile 当前可用的用量窗口
 - 所有 profile 数据都保存在本机
 
 ## 项目结构
@@ -251,13 +251,13 @@ chmod +x build-app.sh codex-account-switcher.sh
 open "build/Codex Account Switcher.app"
 ```
 
-打开后，菜单栏会显示切换器图标和当前 profile 的 5 小时剩余额度百分比。
+打开后，菜单栏会显示切换器图标和当前 profile 的主要剩余额度百分比。
 
 点击菜单栏图标可以：
 
 - 通过 profile 卡片切换账号
 - 点击加号保存新的 profile
-- 查看当前 profile 的 5 小时和 1 周用量进度条
+- 查看当前 profile 的可用用量窗口，以及服务端提供的命名补充额度
 - 在菜单里刷新用量
 - 打开 profile 数据目录
 - 退出切换器

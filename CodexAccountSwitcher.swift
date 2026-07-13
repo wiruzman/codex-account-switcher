@@ -8,16 +8,44 @@ struct CommandResult {
 
 struct AuthFile: Decodable {
     struct Tokens: Decodable {
+        let idToken: String?
         let accessToken: String?
+        let refreshToken: String?
         let accountId: String?
 
         enum CodingKeys: String, CodingKey {
+            case idToken = "id_token"
             case accessToken = "access_token"
+            case refreshToken = "refresh_token"
             case accountId = "account_id"
         }
     }
 
     let tokens: Tokens?
+}
+
+struct TokenRefreshRequest: Encodable {
+    let clientId = "app_EMoamEEZ73f0CkXaXp7hrann"
+    let grantType = "refresh_token"
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case clientId = "client_id"
+        case grantType = "grant_type"
+        case refreshToken = "refresh_token"
+    }
+}
+
+struct TokenRefreshResponse: Decodable {
+    let idToken: String?
+    let accessToken: String?
+    let refreshToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case idToken = "id_token"
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+    }
 }
 
 struct LimitWindowResponse: Decodable {
@@ -42,15 +70,30 @@ struct RateLimitResponse: Decodable {
     }
 }
 
-struct UsageResponse: Decodable {
+struct AdditionalRateLimitResponse: Decodable {
+    let limitName: String?
     let rateLimit: RateLimitResponse?
 
     enum CodingKeys: String, CodingKey {
+        case limitName = "limit_name"
         case rateLimit = "rate_limit"
     }
 }
 
+struct UsageResponse: Decodable {
+    let rateLimit: RateLimitResponse?
+    let additionalRateLimits: [AdditionalRateLimitResponse]?
+
+    enum CodingKeys: String, CodingKey {
+        case rateLimit = "rate_limit"
+        case additionalRateLimits = "additional_rate_limits"
+    }
+}
+
 struct UsageWindowSnapshot: Codable {
+    // Named windows come from `additional_rate_limits`; the main allowance has
+    // no name and is labelled from its duration in the menu.
+    let label: String?
     let usedPercent: Double
     let remainingPercent: Double
     let resetAt: Double?
@@ -61,7 +104,13 @@ struct UsageSnapshot: Codable {
     let fetchedAt: Date
     let primary: UsageWindowSnapshot?
     let secondary: UsageWindowSnapshot?
+    // Optional preserves compatibility with usage caches written by older app versions.
+    let additional: [UsageWindowSnapshot]?
     let error: String?
+
+    var windows: [UsageWindowSnapshot] {
+        [primary, secondary].compactMap { $0 } + (additional ?? [])
+    }
 }
 
 private struct UsageBarRow {
@@ -525,6 +574,18 @@ private final class UsageBarsMenuView: NSView {
 
 final class UsageFetcher {
     private let endpoint = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+    private let refreshEndpoint = URL(string: "https://auth.openai.com/oauth/token")!
+
+    private enum UsageFetchResult {
+        case success(UsageSnapshot)
+        case unauthorized(Data?)
+        case failure(String)
+    }
+
+    private enum TokenRefreshResult {
+        case success(TokenRefreshResponse)
+        case failure(String)
+    }
 
     // A dedicated session that never stores or sends cookies and bypasses the
     // HTTP cache. The usage endpoint sits behind Cloudflare and hands out a
@@ -542,16 +603,80 @@ final class UsageFetcher {
     }()
 
     func fetch(authURL: URL, completion: @escaping (UsageSnapshot) -> Void) {
-        guard let auth = readAuth(authURL), let accessToken = auth.tokens?.accessToken else {
-            completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "No Codex auth token"))
+        guard let auth = readAuth(authURL), auth.tokens?.accessToken != nil else {
+            completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: "No Codex auth token"))
             return
         }
 
-        var request = URLRequest(url: endpoint)
+        fetchUsage(auth: auth) { result in
+            switch result {
+            case .success(let snapshot):
+                completion(snapshot)
+            case .failure(let message):
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: message))
+            case .unauthorized(let body):
+                self.refreshAndRetry(authURL: authURL, auth: auth, unauthorizedBody: body, completion: completion)
+            }
+        }
+    }
+
+    private func refreshAndRetry(
+        authURL: URL,
+        auth: AuthFile,
+        unauthorizedBody: Data?,
+        completion: @escaping (UsageSnapshot) -> Void
+    ) {
+        guard let refreshToken = auth.tokens?.refreshToken, !refreshToken.isEmpty else {
+            let message = Self.errorMessage(status: 401, body: unauthorizedBody)
+            completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: message))
+            return
+        }
+
+        refreshTokens(refreshToken: refreshToken) { result in
+            switch result {
+            case .failure(let message):
+                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: message))
+            case .success(let refreshed):
+                do {
+                    try self.persist(refresh: refreshed, authURL: authURL)
+                } catch {
+                    completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: "Could not save refreshed token"))
+                    return
+                }
+
+                guard let refreshedAuth = self.readAuth(authURL) else {
+                    completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: "Could not read refreshed token"))
+                    return
+                }
+
+                self.fetchUsage(auth: refreshedAuth) { retryResult in
+                    switch retryResult {
+                    case .success(let snapshot):
+                        completion(snapshot)
+                    case .failure(let message):
+                        completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: message))
+                    case .unauthorized(let body):
+                        let message = Self.errorMessage(status: 401, body: body)
+                        completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, additional: nil, error: message))
+                    }
+                }
+            }
+        }
+    }
+
+    private func fetchUsage(auth: AuthFile, completion: @escaping (UsageFetchResult) -> Void) {
+        guard let accessToken = auth.tokens?.accessToken else {
+            completion(.failure("No Codex auth token"))
+            return
+        }
+
+        var request = URLRequest(url: usageRequestURL())
         request.httpMethod = "GET"
         request.timeoutInterval = 15
         request.httpShouldHandleCookies = false
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("codex_desktop", forHTTPHeaderField: "originator")
         request.setValue("Codex Desktop/0.0 (Macintosh; Intel Mac OS X; arm64)", forHTTPHeaderField: "User-Agent")
@@ -563,18 +688,23 @@ final class UsageFetcher {
 
         session.dataTask(with: request) { data, response, error in
             if let error {
-                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: error.localizedDescription))
+                completion(.failure(error.localizedDescription))
                 return
             }
 
             guard let http = response as? HTTPURLResponse else {
-                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "Invalid usage response"))
+                completion(.failure("Invalid usage response"))
+                return
+            }
+
+            if http.statusCode == 401 {
+                completion(.unauthorized(data))
                 return
             }
 
             guard http.statusCode == 200, let data else {
                 let message = Self.errorMessage(status: http.statusCode, body: data)
-                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: message))
+                completion(.failure(message))
                 return
             }
 
@@ -582,11 +712,107 @@ final class UsageFetcher {
                 let usage = try JSONDecoder().decode(UsageResponse.self, from: data)
                 let primary = self.snapshot(from: usage.rateLimit?.primaryWindow)
                 let secondary = self.snapshot(from: usage.rateLimit?.secondaryWindow)
-                completion(UsageSnapshot(fetchedAt: Date(), primary: primary, secondary: secondary, error: nil))
+                let additional = (usage.additionalRateLimits ?? []).flatMap { limit in
+                    [
+                        self.snapshot(from: limit.rateLimit?.primaryWindow, label: limit.limitName),
+                        self.snapshot(from: limit.rateLimit?.secondaryWindow, label: limit.limitName)
+                    ].compactMap { $0 }
+                }
+                completion(.success(UsageSnapshot(
+                    fetchedAt: Date(),
+                    primary: primary,
+                    secondary: secondary,
+                    additional: additional,
+                    error: nil
+                )))
             } catch {
-                completion(UsageSnapshot(fetchedAt: Date(), primary: nil, secondary: nil, error: "Could not parse usage"))
+                completion(.failure("Could not parse usage"))
             }
         }.resume()
+    }
+
+    private func usageRequestURL() -> URL {
+        var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "_cas_nocache", value: UUID().uuidString)
+        ]
+        return components.url ?? endpoint
+    }
+
+    private func refreshTokens(
+        refreshToken: String,
+        completion: @escaping (TokenRefreshResult) -> Void
+    ) {
+        var request = URLRequest(url: refreshEndpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpShouldHandleCookies = false
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("codex_desktop", forHTTPHeaderField: "originator")
+        request.setValue("Codex Desktop/0.0 (Macintosh; Intel Mac OS X; arm64)", forHTTPHeaderField: "User-Agent")
+
+        do {
+            request.httpBody = try JSONEncoder().encode(TokenRefreshRequest(refreshToken: refreshToken))
+        } catch {
+            completion(.failure("Could not refresh token"))
+            return
+        }
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error.localizedDescription))
+                return
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                completion(.failure("Invalid token refresh response"))
+                return
+            }
+
+            guard http.statusCode >= 200, http.statusCode < 300, let data else {
+                completion(.failure(Self.refreshErrorMessage(status: http.statusCode, body: data)))
+                return
+            }
+
+            do {
+                let refreshed = try JSONDecoder().decode(TokenRefreshResponse.self, from: data)
+                guard refreshed.accessToken != nil else {
+                    completion(.failure("Token refresh returned no access token"))
+                    return
+                }
+                completion(.success(refreshed))
+            } catch {
+                completion(.failure("Could not parse token refresh"))
+            }
+        }.resume()
+    }
+
+    private func persist(refresh: TokenRefreshResponse, authURL: URL) throws {
+        let data = try Data(contentsOf: authURL)
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "CodexAccountSwitcher", code: 1)
+        }
+
+        var tokens = root["tokens"] as? [String: Any] ?? [:]
+        if let idToken = refresh.idToken {
+            tokens["id_token"] = idToken
+        }
+        if let accessToken = refresh.accessToken {
+            tokens["access_token"] = accessToken
+            if tokens["account_id"] == nil, let accountId = accountIdFromJWT(accessToken) {
+                tokens["account_id"] = accountId
+            }
+        }
+        if let refreshToken = refresh.refreshToken {
+            tokens["refresh_token"] = refreshToken
+        }
+
+        root["tokens"] = tokens
+        root["last_refresh"] = ISO8601DateFormatter().string(from: Date())
+
+        let updated = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try updated.write(to: authURL, options: .atomic)
     }
 
     private func readAuth(_ url: URL) -> AuthFile? {
@@ -594,16 +820,13 @@ final class UsageFetcher {
         return try? JSONDecoder().decode(AuthFile.self, from: data)
     }
 
-    // Turns a non-200 usage response into a message the user can act on. A 401
-    // means Codex's stored token (and often its whole session) was invalidated
-    // server-side, which is common for SSO/Team accounts; the only fix is to
-    // sign in to Codex again and re-capture the profile.
+    // Turns a non-200 usage response into a message the user can act on.
     private static func errorMessage(status: Int, body: Data?) -> String {
         let code = bodyErrorCode(body)
         switch status {
         case 401:
             if code == "refresh_token_invalidated" {
-                return "Session ended — sign in to Codex again"
+                return "Session ended - sign in to Codex again"
             }
             return "Sign in to Codex again"
         case 403:
@@ -615,20 +838,44 @@ final class UsageFetcher {
         }
     }
 
-    private static func bodyErrorCode(_ body: Data?) -> String? {
-        guard let body,
-              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-              let error = json["error"] as? [String: Any] else {
-            return nil
+    private static func refreshErrorMessage(status: Int, body: Data?) -> String {
+        let code = bodyErrorCode(body)
+        if status == 401 {
+            switch code {
+            case "refresh_token_expired":
+                return "Session expired - sign in to Codex again"
+            case "refresh_token_reused", "refresh_token_invalidated":
+                return "Session ended - sign in to Codex again"
+            default:
+                return "Could not refresh session - sign in to Codex again"
+            }
         }
-        return error["code"] as? String
+        if let code {
+            return "Token refresh failed: \(code)"
+        }
+        return "Token refresh failed: HTTP \(status)"
     }
 
-    private func snapshot(from window: LimitWindowResponse?) -> UsageWindowSnapshot? {
+    private static func bodyErrorCode(_ body: Data?) -> String? {
+        guard let body,
+              let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return nil
+        }
+        if let error = json["error"] as? [String: Any] {
+            return error["code"] as? String
+        }
+        if let error = json["error"] as? String {
+            return error
+        }
+        return json["code"] as? String
+    }
+
+    private func snapshot(from window: LimitWindowResponse?, label: String? = nil) -> UsageWindowSnapshot? {
         guard let window else { return nil }
         let used = window.usedPercent ?? 0
         let remaining = min(max(100 - used, 0), 100)
         return UsageWindowSnapshot(
+            label: label,
             usedPercent: used,
             remainingPercent: remaining,
             resetAt: window.resetAt,
@@ -678,6 +925,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !terminateIfAnotherInstanceIsRunning() else { return }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureStatusItemIcon()
         loadUsageCache()
@@ -686,6 +935,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.refreshUsage()
         }
+    }
+
+    private func terminateIfAnotherInstanceIsRunning() -> Bool {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return false }
+
+        let currentProcessId = ProcessInfo.processInfo.processIdentifier
+        let otherInstances = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { $0.processIdentifier != currentProcessId }
+
+        guard !otherInstances.isEmpty else { return false }
+
+        NSApplication.shared.terminate(nil)
+        return true
     }
 
     @objc private func rebuildMenu() {
@@ -972,10 +1235,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func profileSubtitle(_ profile: String) -> String {
-        guard let snapshot = usageByProfile[profile], snapshot.error == nil, let primary = snapshot.primary else {
+        guard let snapshot = usageByProfile[profile],
+              snapshot.error == nil,
+              let window = snapshot.primary ?? snapshot.windows.first else {
             return "--"
         }
-        return "\(windowTitle(seconds: primary.windowSeconds)) · \(formatPercent(primary.remainingPercent))"
+        return "\(usageTitle(for: window)) · \(formatPercent(window.remainingPercent))"
     }
 
     private func addUsageItems(to menu: NSMenu, snapshot: UsageSnapshot?) {
@@ -990,7 +1255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let windows = [snapshot.primary, snapshot.secondary].compactMap { $0 }
+        let windows = snapshot.windows
         guard !windows.isEmpty else {
             addDisabled("Usage: unavailable", to: menu)
             addDisabled("Updated: \(formatDate(snapshot.fetchedAt))", to: menu)
@@ -1001,7 +1266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.view = UsageBarsMenuView(
             rows: windows.map { window in
                 UsageBarRow(
-                    title: windowTitle(seconds: window.windowSeconds),
+                    title: usageTitle(for: window),
                     usedPercent: window.usedPercent,
                     resetText: formatResetDistance(window.resetAt)
                 )
@@ -1029,12 +1294,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let snapshot = usageByProfile[activeProfile]
-        button.title = " \(formatPercent(snapshot?.primary?.remainingPercent))"
+        let statusWindow = snapshot?.primary ?? snapshot?.windows.first
+        button.title = " \(formatPercent(statusWindow?.remainingPercent))"
 
         if let snapshot, snapshot.error == nil {
-            let parts = [snapshot.primary, snapshot.secondary].compactMap { window -> String? in
-                guard let window else { return nil }
-                return "\(windowTitle(seconds: window.windowSeconds)) \(formatPercent(window.remainingPercent))"
+            let parts = snapshot.windows.map { window in
+                "\(usageTitle(for: window)) \(formatPercent(window.remainingPercent))"
             }
             button.toolTip = parts.isEmpty
                 ? "\(activeProfile): usage unavailable"
@@ -1060,6 +1325,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if hours >= 1 { return "\(Int(hours.rounded()))h" }
         let minutes = seconds / 60
         return "\(max(Int(minutes.rounded()), 1))m"
+    }
+
+    private func usageTitle(for window: UsageWindowSnapshot) -> String {
+        let durationTitle = windowTitle(seconds: window.windowSeconds)
+        guard let label = window.label, !label.isEmpty else { return durationTitle }
+        return "\(label) · \(durationTitle)"
     }
 
     private func formatResetDistance(_ epochSeconds: Double?) -> String {
