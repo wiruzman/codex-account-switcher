@@ -3,7 +3,9 @@ set -euo pipefail
 
 umask 077
 
-APP_NAME="${CODEX_APP_NAME:-Codex}"
+# The July 2026 desktop update keeps Codex's bundle identifier but renames the
+# application bundle and executable from Codex to ChatGPT.
+CODEX_APP_PATH="${CODEX_APP_PATH:-}"
 SWITCHER_HOME="${SWITCHER_HOME:-$HOME/Library/Application Support/CodexAccountSwitcher}"
 PROFILES_DIR="$SWITCHER_HOME/profiles"
 ACTIVE_FILE="$SWITCHER_HOME/active-profile"
@@ -27,7 +29,7 @@ Environment overrides:
   SWITCHER_HOME       Profile storage directory
   CODEX_AUTH_FILE     Codex CLI auth file, default ~/.codex/auth.json
   CODEX_APP_SUPPORT   Codex Desktop state directory, default ~/Library/Application Support/Codex
-  CODEX_APP_NAME      macOS app name, default Codex
+  CODEX_APP_PATH      Codex/ChatGPT app bundle path, for non-standard installations
 USAGE
 }
 
@@ -75,6 +77,97 @@ active_profile() {
   if [[ -f "$ACTIVE_FILE" ]]; then
     sed -n '1p' "$ACTIVE_FILE"
   fi
+}
+
+bundle_value() {
+  local app_path="$1"
+  local key="$2"
+  /usr/libexec/PlistBuddy -c "Print :$key" "$app_path/Contents/Info.plist" 2>/dev/null || true
+}
+
+is_codex_bundle() {
+  local app_path="$1"
+  [[ "$(bundle_value "$app_path" "CFBundleIdentifier")" == "com.openai.codex" ]]
+}
+
+codex_app_path() {
+  local candidate
+
+  if [[ -n "$CODEX_APP_PATH" ]]; then
+    [[ -d "$CODEX_APP_PATH" ]] || fail "CODEX_APP_PATH is not an app bundle: $CODEX_APP_PATH"
+    printf '%s\n' "$CODEX_APP_PATH"
+    return 0
+  fi
+
+  # Codex now updates in place as ChatGPT.app. Check its exact bundle
+  # identifier so an unrelated ChatGPT installation is never selected.
+  for candidate in "/Applications/ChatGPT.app" "$HOME/Applications/ChatGPT.app"; do
+    if [[ -d "$candidate" ]] && is_codex_bundle "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+codex_app_name() {
+  local app_path
+  app_path="$(codex_app_path || true)"
+  if [[ -n "$app_path" ]]; then
+    bundle_value "$app_path" "CFBundleDisplayName"
+    return 0
+  fi
+  printf '%s\n' "ChatGPT"
+}
+
+codex_process_name() {
+  local app_path
+  app_path="$(codex_app_path || true)"
+  if [[ -n "$app_path" ]]; then
+    bundle_value "$app_path" "CFBundleExecutable"
+  fi
+}
+
+is_codex_running() {
+  local process_name
+  process_name="$(codex_process_name || true)"
+  if [[ -n "$process_name" ]]; then
+    pgrep -x "$process_name" >/dev/null 2>&1
+    return
+  fi
+
+  # Fallback for a non-standard installation where only the display name is available.
+  pgrep -x "ChatGPT" >/dev/null 2>&1
+}
+
+wait_for_codex_to_stop() {
+  for _ in {1..40}; do
+    if ! is_codex_running; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+wait_for_codex_to_start() {
+  for _ in {1..40}; do
+    if is_codex_running; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+quit_application() {
+  local app_name="$1"
+  /usr/bin/osascript \
+    -e 'on run argv' \
+    -e 'tell application (item 1 of argv) to quit' \
+    -e 'end run' \
+    "$app_name" >/dev/null 2>&1 || true
 }
 
 copy_file_if_present() {
@@ -160,7 +253,7 @@ cmd_capture() {
   local name="${1:-}"
   validate_profile_name "$name"
   with_lock
-  log "quitting $APP_NAME before capture"
+  log "quitting $(codex_app_name) before capture"
   quit_codex
   capture_into_profile "$name"
   printf '%s\n' "$name" > "$ACTIVE_FILE"
@@ -168,14 +261,42 @@ cmd_capture() {
 }
 
 quit_codex() {
-  /usr/bin/osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
-  for _ in {1..40}; do
-    if ! pgrep -x "$APP_NAME" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.25
-  done
-  log "warning: $APP_NAME is still running; continuing anyway"
+  local app_name
+  app_name="$(codex_app_name)"
+  quit_application "$app_name"
+  if ! wait_for_codex_to_stop; then
+    log "warning: $app_name is still running; continuing anyway"
+  fi
+}
+
+open_codex() {
+  local app_path app_name
+  app_path="$(codex_app_path || true)"
+  app_name="$(codex_app_name)"
+
+  if [[ -n "$app_path" ]]; then
+    /usr/bin/open "$app_path" >/dev/null 2>&1 || fail "could not open $app_path"
+  else
+    /usr/bin/open -a "$app_name" >/dev/null 2>&1 || \
+      fail "could not find the Codex app; set CODEX_APP_PATH to its .app bundle"
+  fi
+
+  if wait_for_codex_to_start; then
+    return 0
+  fi
+
+  # A just-updated Electron app can still be clearing its old singleton when
+  # the first launch request arrives. Submit one more request before reporting
+  # a failure to the menu-bar app instead of silently swallowing it.
+  log "retrying $app_name launch"
+  if [[ -n "$app_path" ]]; then
+    /usr/bin/open "$app_path" >/dev/null 2>&1 || fail "could not open $app_path"
+  else
+    /usr/bin/open -a "$app_name" >/dev/null 2>&1 || \
+      fail "could not find the Codex app; set CODEX_APP_PATH to its .app bundle"
+  fi
+
+  wait_for_codex_to_start || fail "$app_name did not start; try opening it once, then switch again"
 }
 
 restore_profile() {
@@ -213,7 +334,7 @@ cmd_switch() {
   fi
   validate_profile_name "$current"
 
-  log "quitting $APP_NAME"
+  log "quitting $(codex_app_name)"
   quit_codex
 
   if [[ "$current" != "$name" ]]; then
@@ -226,8 +347,8 @@ cmd_switch() {
   printf '%s\n' "$name" > "$ACTIVE_FILE"
 
   if [[ "$no_open" != "--no-open" ]]; then
-    log "opening $APP_NAME"
-    /usr/bin/open -a "$APP_NAME" >/dev/null 2>&1 || log "warning: could not open $APP_NAME"
+    log "opening $(codex_app_name)"
+    open_codex
   fi
 }
 
@@ -263,6 +384,10 @@ cmd_open_folder() {
 main() {
   local command="${1:-}"
   shift || true
+
+  if [[ -n "$CODEX_APP_PATH" && ! -d "$CODEX_APP_PATH" ]]; then
+    fail "CODEX_APP_PATH is not an app bundle: $CODEX_APP_PATH"
+  fi
 
   case "$command" in
     capture) cmd_capture "$@" ;;

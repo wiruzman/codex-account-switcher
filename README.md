@@ -18,6 +18,8 @@ A local-first macOS menu bar app for switching between multiple OpenAI Codex acc
 
 Codex Account Switcher saves the Codex CLI auth state and Codex Desktop app state for each profile. When you switch profiles, it quits Codex, restores the selected account state, and opens Codex again.
 
+Current Codex desktop releases open as **ChatGPT.app** after updating. The switcher recognizes that bundle and restarts it automatically.
+
 It is useful when you regularly move between personal, work, or team Codex accounts.
 
 ## Features
@@ -142,7 +144,7 @@ Environment variables:
 SWITCHER_HOME       Profile storage directory
 CODEX_AUTH_FILE     Codex CLI auth file, default ~/.codex/auth.json
 CODEX_APP_SUPPORT   Codex Desktop state directory, default ~/Library/Application Support/Codex
-CODEX_APP_NAME      macOS app name, default Codex
+CODEX_APP_PATH      Codex/ChatGPT app bundle path, for non-standard installations
 ```
 
 ## Recapturing Old Profiles
@@ -177,6 +179,8 @@ This keeps `auth.json` and Codex Desktop state in the latest format.
 一个本地优先的 macOS 菜单栏工具，用来在多个 OpenAI Codex 账号之间快速切换。
 
 Codex Account Switcher 会保存每个 profile 对应的 Codex CLI 登录态和 Codex Desktop 应用状态。切换 profile 时，它会自动退出 Codex、恢复目标账号状态，并重新打开 Codex。
+
+更新后的 Codex 桌面端会以 **ChatGPT.app** 打开。本工具会自动识别这个应用包，并在切换后重新启动正确的应用。
 
 适合同时使用个人账号、工作账号或不同团队账号的场景。
 
@@ -302,7 +306,7 @@ codex-account-switcher.sh open-folder
 SWITCHER_HOME       Profile 存储目录
 CODEX_AUTH_FILE     Codex CLI auth 文件，默认 ~/.codex/auth.json
 CODEX_APP_SUPPORT   Codex Desktop 状态目录，默认 ~/Library/Application Support/Codex
-CODEX_APP_NAME      macOS App 名称，默认 Codex
+CODEX_APP_PATH      Codex/ChatGPT App 包路径，用于非标准安装位置
 ```
 
 ## 重新捕获旧 Profile
