@@ -126,7 +126,6 @@ private struct ProfileTabItem {
 }
 
 private final class MenuHeaderView: NSView {
-    private let icon: NSImage?
     private let titleText: String
     private static let menuWidth: CGFloat = 280
 
@@ -137,9 +136,17 @@ private final class MenuHeaderView: NSView {
     }
 
     init(icon: NSImage?, title: String) {
-        self.icon = icon
         self.titleText = title
         super.init(frame: NSRect(origin: .zero, size: NSSize(width: Self.menuWidth, height: 34)))
+
+        if let icon {
+            let imageView = NSImageView(frame: NSRect(x: 16, y: 9, width: 16, height: 16))
+            imageView.image = icon
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            imageView.contentTintColor = .labelColor
+            imageView.setAccessibilityElement(false)
+            addSubview(imageView)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -148,11 +155,6 @@ private final class MenuHeaderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-
-        if let icon {
-            let iconY = max(0, (bounds.height - 16) / 2)
-            icon.draw(in: NSRect(x: 16, y: iconY, width: 16, height: 16))
-        }
 
         let attributes = textAttributes(
             font: .systemFont(ofSize: 12, weight: .medium),
