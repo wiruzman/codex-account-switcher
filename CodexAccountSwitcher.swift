@@ -232,6 +232,9 @@ private final class ProfileTabButton: NSButton {
         focusRingType = .none
         setButtonType(.momentaryChange)
         isEnabled = !item.isActive
+        toolTip = "\(item.profile), \(item.subtitle)"
+        setAccessibilityLabel("Account \(item.profile)")
+        setAccessibilityValue(item.subtitle)
     }
 
     required init?(coder: NSCoder) {
@@ -1240,7 +1243,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let window = snapshot.primary ?? snapshot.windows.first else {
             return "--"
         }
-        return "\(usageTitle(for: window)) · \(formatPercent(window.remainingPercent))"
+        // Tiles are intentionally compact, so keep the percentage ahead of
+        // the window title where tail truncation cannot hide it.
+        return "\(formatPercent(window.remainingPercent)) · \(usageTitle(for: window))"
     }
 
     private func addUsageItems(to menu: NSMenu, snapshot: UsageSnapshot?) {
