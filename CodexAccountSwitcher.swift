@@ -122,6 +122,7 @@ private struct UsageBarRow {
 private struct ProfileTabItem {
     let profile: String
     let subtitle: String
+    let detail: String
     let isActive: Bool
 }
 
@@ -234,9 +235,9 @@ private final class ProfileTabButton: NSButton {
         focusRingType = .none
         setButtonType(.momentaryChange)
         isEnabled = !item.isActive
-        toolTip = "\(item.profile), \(item.subtitle)"
+        toolTip = "\(item.profile), \(item.detail)"
         setAccessibilityLabel("Account \(item.profile)")
-        setAccessibilityValue(item.subtitle)
+        setAccessibilityValue(item.detail)
     }
 
     required init?(coder: NSCoder) {
@@ -1017,7 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let submenu = NSMenu()
 
         for profile in profiles {
-            let item = NSMenuItem(title: "\(profile)  \(profileSubtitle(profile))", action: #selector(switchProfile(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: "\(profile)  \(profileUsageText(profile).subtitle)", action: #selector(switchProfile(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = profile
             item.state = profile == activeProfile ? .on : .off
@@ -1231,23 +1232,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func profileTabItems(profiles: [String], activeProfile: String) -> [ProfileTabItem] {
         profiles.map { profile in
-            ProfileTabItem(
+            let usageText = profileUsageText(profile)
+            return ProfileTabItem(
                 profile: profile,
-                subtitle: profileSubtitle(profile),
+                subtitle: usageText.subtitle,
+                detail: usageText.detail,
                 isActive: profile == activeProfile
             )
         }
     }
 
-    private func profileSubtitle(_ profile: String) -> String {
+    private func profileUsageText(_ profile: String) -> (subtitle: String, detail: String) {
         guard let snapshot = usageByProfile[profile],
               snapshot.error == nil,
               let window = snapshot.primary ?? snapshot.windows.first else {
-            return "--"
+            return ("--", "Usage unavailable")
         }
-        // Tiles are intentionally compact, so keep the percentage ahead of
-        // the window title where tail truncation cannot hide it.
-        return "\(formatPercent(window.remainingPercent)) · \(usageTitle(for: window))"
+
+        let remaining = formatPercent(window.remainingPercent)
+        let compactTitle = compactWindowTitle(seconds: window.windowSeconds)
+        return (
+            "\(remaining)·\(compactTitle)",
+            "\(remaining) remaining, \(usageTitle(for: window)) window"
+        )
     }
 
     private func addUsageItems(to menu: NSMenu, snapshot: UsageSnapshot?) {
@@ -1329,6 +1336,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if days >= 6.5 { return "Weekly" }
         if days >= 1.5 { return "\(Int(days.rounded()))d" }
         if days >= 0.9 { return "Daily" }
+        if hours >= 1 { return "\(Int(hours.rounded()))h" }
+        let minutes = seconds / 60
+        return "\(max(Int(minutes.rounded()), 1))m"
+    }
+
+    private func compactWindowTitle(seconds: Double?) -> String {
+        guard let seconds, seconds.isFinite, seconds > 0 else { return "?" }
+        let days = seconds / 86_400
+        let hours = seconds / 3_600
+        if days >= 28 { return "mo" }
+        if days >= 6.5 { return "1w" }
+        if days >= 1.5 { return "\(Int(days.rounded()))d" }
+        if days >= 0.9 { return "1d" }
         if hours >= 1 { return "\(Int(hours.rounded()))h" }
         let minutes = seconds / 60
         return "\(max(Int(minutes.rounded()), 1))m"
