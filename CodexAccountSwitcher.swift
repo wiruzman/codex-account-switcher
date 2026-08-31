@@ -921,6 +921,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherHome.appendingPathComponent("usage-cache.json")
     }
 
+    private var codexAuthURL: URL {
+        if let override = ProcessInfo.processInfo.environment["CODEX_AUTH_FILE"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: NSString(string: override).expandingTildeInPath)
+        }
+
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/auth.json")
+    }
+
     override init() {
         if let bundled = Bundle.main.path(forResource: "codex-account-switcher", ofType: "sh") {
             scriptPath = bundled
@@ -1174,6 +1184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .appendingPathComponent("auth/auth.json")
     }
 
+    private func usageAuthURL(profile: String, activeProfile: String) -> URL {
+        // Codex rotates refresh tokens in its live auth file. The saved copy for
+        // the active profile is only updated when switching away, so polling it
+        // can reuse an old refresh token and incorrectly report an ended session.
+        profile == activeProfile ? codexAuthURL : profileAuthURL(profile: profile)
+    }
+
     private func refreshUsage() {
         guard !isRefreshingUsage else { return }
 
@@ -1191,10 +1208,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let group = DispatchGroup()
         var updated: [String: UsageSnapshot] = [:]
         let lock = NSLock()
+        let active = activeProfile()
 
         for profile in profiles {
             group.enter()
-            usageFetcher.fetch(authURL: profileAuthURL(profile: profile)) { snapshot in
+            let authURL = usageAuthURL(profile: profile, activeProfile: active)
+            usageFetcher.fetch(authURL: authURL) { snapshot in
                 lock.lock()
                 updated[profile] = snapshot
                 lock.unlock()
