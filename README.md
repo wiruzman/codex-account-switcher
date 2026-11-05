@@ -49,6 +49,7 @@ It is useful when you regularly move between personal, work, or team Codex accou
 - OpenAI Codex Desktop App
 - Codex CLI, with at least one account already signed in
 - Swift compiler, usually provided by Xcode Command Line Tools
+- `rsync`, included with macOS
 
 This app does not read files owned by other apps. Usage display reads each saved profile's own Codex `auth.json`, calls Codex's official `https://chatgpt.com/backend-api/wham/usage` endpoint, and stores only a small cache under `~/Library/Application Support/CodexAccountSwitcher/usage-cache.json`.
 
@@ -127,6 +128,8 @@ This tool only copies Codex auth and desktop state files on your local machine. 
 Be careful with profile data. `~/Library/Application Support/Codex` may contain cookies, Local Storage, window state, and other desktop app state. Do not commit profile data to GitHub or share it with anyone else.
 
 Codex Desktop must be restarted when switching accounts. Electron and Chromium auth state does not hot-reload while the app is running, so this tool quits Codex before capture and switch operations.
+
+Generated artifact runtimes (`artifact-sessions/runtime-generations`) are excluded from account syncing. These local installations contain read-only files; existing copies in saved profiles and the live app folder are left untouched.
 
 ## CLI Reference
 

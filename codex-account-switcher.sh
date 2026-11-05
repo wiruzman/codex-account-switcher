@@ -211,7 +211,12 @@ sync_dir_if_present() {
 
   mkdir -p "$dst"
   if command -v rsync >/dev/null 2>&1; then
+    # Generated artifact runtimes contain intentionally read-only trees. They
+    # are local installations, not account state; syncing/deleting an older
+    # generation can fail with EACCES. Exclude on both sides so old profile
+    # copies and the live installation are also protected from --delete.
     rsync -a --checksum --delete \
+      --exclude '/artifact-sessions/runtime-generations/' \
       --exclude 'Cache/' \
       --exclude 'Code Cache/' \
       --exclude 'Crashpad/' \
@@ -220,12 +225,7 @@ sync_dir_if_present() {
       --exclude 'GPUCache/' \
       "$src"/ "$dst"/
   else
-    local tmp="$dst.tmp.$$"
-    rm -rf "$tmp"
-    mkdir -p "$tmp"
-    cp -pR "$src"/. "$tmp"/
-    rm -rf "$dst"
-    mv "$tmp" "$dst"
+    fail "rsync is required to safely sync account state; ensure /usr/bin is on PATH"
   fi
 }
 
