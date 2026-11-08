@@ -98,6 +98,13 @@ struct UsageWindowSnapshot: Codable {
     let remainingPercent: Double
     let resetAt: Double?
     let windowSeconds: Double?
+
+    func resetElapsedPercent(at date: Date = Date()) -> Double? {
+        guard let resetAt, resetAt.isFinite,
+              let windowSeconds, windowSeconds.isFinite, windowSeconds > 0 else { return nil }
+        let remaining = resetAt - date.timeIntervalSince1970
+        return min(max(1 - remaining / windowSeconds, 0), 1) * 100
+    }
 }
 
 struct UsageSnapshot: Codable {
@@ -116,6 +123,7 @@ struct UsageSnapshot: Codable {
 private struct UsageBarRow {
     let title: String
     let usedPercent: Double?
+    let resetPercent: Double?
     let resetText: String
 }
 
@@ -416,9 +424,10 @@ private final class UsageBarsMenuView: NSView {
     private static let menuWidth: CGFloat = 280
     private static let horizontalPadding: CGFloat = 16
     private static let topPadding: CGFloat = 0
-    private static let rowHeight: CGFloat = 50
+    private static let rowHeight: CGFloat = 58
     private static let footerHeight: CGFloat = 18
     private static let barHeight: CGFloat = 6
+    private static let labelGap: CGFloat = 8
     private static let refreshTitle = "Refresh now"
     private static let footerGap: CGFloat = 4
 
@@ -473,12 +482,9 @@ private final class UsageBarsMenuView: NSView {
             font: .systemFont(ofSize: 12, weight: .medium),
             color: .labelColor
         )
+        let valueFont = NSFont.systemFont(ofSize: 10, weight: .medium)
         let valueAttributes = textAttributes(
-            font: .systemFont(ofSize: 10, weight: .medium),
-            color: .labelColor.withAlphaComponent(0.65)
-        )
-        let resetAttributes = textAttributes(
-            font: .systemFont(ofSize: 10, weight: .medium),
+            font: valueFont,
             color: .labelColor.withAlphaComponent(0.65),
             alignment: .right
         )
@@ -486,41 +492,31 @@ private final class UsageBarsMenuView: NSView {
             font: .systemFont(ofSize: 10, weight: .medium),
             color: .labelColor.withAlphaComponent(0.45)
         )
-        let trackColor = NSColor.labelColor.withAlphaComponent(0.05)
         let fillColor = NSColor(calibratedRed: 252 / 255, green: 121 / 255, blue: 32 / 255, alpha: 1)
+        let contentWidth = bounds.width - Self.horizontalPadding * 2
+        let labelWidth = min(rows.flatMap { row in
+            [Self.textWidth("\(formatPercent(row.usedPercent)) used", font: valueFont),
+             Self.textWidth(row.resetText, font: valueFont)]
+        }.max() ?? 0, contentWidth / 2)
+        let barWidth = contentWidth - Self.labelGap - labelWidth
+        let labelX = Self.horizontalPadding + barWidth + Self.labelGap
 
         for (index, row) in rows.enumerated() {
             let y = Self.topPadding + CGFloat(index) * Self.rowHeight
-            drawText(row.title, in: NSRect(x: Self.horizontalPadding, y: y, width: Self.menuWidth - Self.horizontalPadding * 2, height: 18), attributes: titleAttributes)
+            drawText(row.title, in: NSRect(x: Self.horizontalPadding, y: y, width: contentWidth, height: 18), attributes: titleAttributes)
 
-            let trackRect = NSRect(
-                x: Self.horizontalPadding,
-                y: y + 22,
-                width: Self.menuWidth - Self.horizontalPadding * 2,
-                height: Self.barHeight
-            )
-            trackColor.setFill()
-            NSBezierPath(roundedRect: trackRect, xRadius: Self.barHeight / 2, yRadius: Self.barHeight / 2).fill()
-
-            let percent = clampedPercent(row.usedPercent)
-            if percent > 0 {
-                let fillWidth = max(Self.barHeight, trackRect.width * CGFloat(percent / 100))
-                let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: min(fillWidth, trackRect.width), height: trackRect.height)
-                fillColor.setFill()
-                NSBezierPath(roundedRect: fillRect, xRadius: Self.barHeight / 2, yRadius: Self.barHeight / 2).fill()
-            }
-
-            let textY = y + 32
-            let halfWidth = (Self.menuWidth - Self.horizontalPadding * 2) / 2
+            let textY = y + 20
+            drawBar(row.usedPercent, in: NSRect(x: Self.horizontalPadding, y: textY + 4, width: barWidth, height: Self.barHeight), color: fillColor)
             drawText(
                 "\(formatPercent(row.usedPercent)) used",
-                in: NSRect(x: Self.horizontalPadding, y: textY, width: halfWidth, height: 18),
+                in: NSRect(x: labelX, y: textY, width: labelWidth, height: 14),
                 attributes: valueAttributes
             )
+            drawBar(row.resetPercent, in: NSRect(x: Self.horizontalPadding, y: textY + 20, width: barWidth, height: Self.barHeight), color: fillColor)
             drawText(
                 row.resetText,
-                in: NSRect(x: Self.horizontalPadding + halfWidth, y: textY, width: halfWidth, height: 18),
-                attributes: resetAttributes
+                in: NSRect(x: labelX, y: textY + 16, width: labelWidth, height: 14),
+                attributes: valueAttributes
             )
         }
 
@@ -536,6 +532,18 @@ private final class UsageBarsMenuView: NSView {
             ),
             attributes: footerAttributes
         )
+    }
+
+    private func drawBar(_ value: Double?, in trackRect: NSRect, color: NSColor) {
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        NSBezierPath(roundedRect: trackRect, xRadius: Self.barHeight / 2, yRadius: Self.barHeight / 2).fill()
+
+        let percent = clampedPercent(value)
+        guard percent > 0 else { return }
+        let fillWidth = max(Self.barHeight, trackRect.width * CGFloat(percent / 100))
+        let fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: min(fillWidth, trackRect.width), height: trackRect.height)
+        color.setFill()
+        NSBezierPath(roundedRect: fillRect, xRadius: Self.barHeight / 2, yRadius: Self.barHeight / 2).fill()
     }
 
     private static func updatedTextWidth(_ text: String, font: NSFont) -> CGFloat {
@@ -1301,6 +1309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 UsageBarRow(
                     title: usageTitle(for: window),
                     usedPercent: window.usedPercent,
+                    resetPercent: window.resetElapsedPercent(),
                     resetText: formatResetDistance(window.resetAt)
                 )
             },
@@ -1391,14 +1400,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let minutes = (seconds % 3_600) / 60
 
         if days > 0 {
-            return hours > 0 ? "Resets in \(days)d \(hours)h" : "Resets in \(days)d"
+            return hours > 0 ? "\(days)d \(hours)h to reset" : "\(days)d to reset"
         }
 
         if hours > 0 {
-            return minutes > 0 ? "Resets in \(hours)h \(minutes)m" : "Resets in \(hours)h"
+            return minutes > 0 ? "\(hours)h \(minutes)m to reset" : "\(hours)h to reset"
         }
 
-        return "Resets in \(max(minutes, 1))m"
+        return "\(max(minutes, 1))m to reset"
     }
 
     private func formatDate(_ date: Date) -> String {
