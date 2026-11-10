@@ -233,6 +233,7 @@ private final class AccountSubmenuView: NSView {
 // Menu items retain their native title/action for keyboard navigation and type-select.
 // The view supplies wrapped usage details and a full-width pointer target.
 private final class AccountMenuItemView: NSView {
+    private static let horizontalPadding: CGFloat = 16
     private var isHovered = false
     private var hoverTrackingArea: NSTrackingArea?
 
@@ -240,8 +241,8 @@ private final class AccountMenuItemView: NSView {
 
     init(title: String, details: [String] = [], symbol: String? = nil) {
         let width: CGFloat = 248
-        let textX: CGFloat = symbol == nil ? 8 : 32
-        let textWidth = width - textX - 8
+        let textX = Self.horizontalPadding + (symbol == nil ? 0 : 24)
+        let textWidth = width - textX - Self.horizontalPadding
         let detailFont = NSFont.systemFont(ofSize: 11)
         var height: CGFloat = details.isEmpty ? 36 : 28
         let detailHeights = details.map { detail -> CGFloat in
@@ -277,7 +278,7 @@ private final class AccountMenuItemView: NSView {
         }
 
         if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let icon = NSImageView(frame: NSRect(x: 8, y: (height - 16) / 2, width: 16, height: 16))
+            let icon = NSImageView(frame: NSRect(x: Self.horizontalPadding, y: (height - 16) / 2, width: 16, height: 16))
             icon.image = image
             icon.contentTintColor = .labelColor
             icon.setAccessibilityElement(false)
