@@ -913,23 +913,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         menu.autoenablesItems = false
 
+        menu.addItem(makeSectionHeader(title: "Account"))
+
         let selectorItem = NSMenuItem(title: activeProfile.isEmpty ? "Accounts" : activeProfile, action: nil, keyEquivalent: "")
         selectorItem.submenu = accountsSubmenu(profiles: profiles, activeProfile: activeProfile)
         menu.addItem(selectorItem)
 
         menu.addItem(.separator())
-        let statusHeader: NSMenuItem
-        if #available(macOS 14.0, *) {
-            statusHeader = .sectionHeader(title: "Status")
-        } else {
-            statusHeader = NSMenuItem(title: "Status", action: nil, keyEquivalent: "")
-            statusHeader.attributedTitle = NSAttributedString(string: "Status", attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ])
-            statusHeader.isEnabled = false
-        }
-        menu.addItem(statusHeader)
+        menu.addItem(makeSectionHeader(title: "Status"))
 
         if !activeProfile.isEmpty {
             addUsageItems(to: menu, snapshot: usageByProfile[activeProfile])
@@ -951,6 +942,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             width: max(80, MenuLayout.contentWidth - overflow))
         }
         return menu
+    }
+
+    private func makeSectionHeader(title: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) {
+            return .sectionHeader(title: title)
+        }
+        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        header.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ])
+        header.isEnabled = false
+        return header
     }
 
     private func setAccountTitle(on item: NSMenuItem, profile: String, width: CGFloat) {

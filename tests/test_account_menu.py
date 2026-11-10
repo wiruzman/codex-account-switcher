@@ -35,7 +35,7 @@ extension AppDelegate {
 
         for profiles in [[], ["personal"], ["personal", "work"], ["personal", "work", "team", "extra", "expired"]] {
             let main = makeMenu(profiles: profiles, activeProfile: "personal")
-            let accountItem = main.items[0]
+            let accountItem = main.items[1]
             assert(accountItem.title == "personal")
             assert(accountItem.hasSubmenu, "Accounts must use native submenu tracking")
             let menu = accountItem.submenu!
@@ -72,9 +72,9 @@ extension AppDelegate {
             assert(quit.keyEquivalentModifierMask == [.command])
         }
         let emptyMain = makeMenu(profiles: [], activeProfile: "")
-        let empty = emptyMain.items[0].submenu!
-        assert(emptyMain.items[0].view == nil)
-        assert(emptyMain.items[0].title == "Accounts")
+        let empty = emptyMain.items[1].submenu!
+        assert(emptyMain.items[1].view == nil)
+        assert(emptyMain.items[1].title == "Accounts")
         assert(empty.items.filter { !$0.isHidden }.map(\.title) == ["Add account"])
         let orphan = accountsSubmenu(profiles: ["work"], activeProfile: "unsaved")
         assert(orphan.items.filter { !$0.isSeparatorItem }.map(\.title) == ["work", "Add account"])
