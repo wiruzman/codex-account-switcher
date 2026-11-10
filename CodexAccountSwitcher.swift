@@ -217,7 +217,12 @@ private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
         let secondaryColor = isHighlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
         if !isHighlighted {
             NSColor.labelColor.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: cellFrame, xRadius: 4, yRadius: 4).fill()
+            // Match the native selection bounds, while keeping text at the
+            // standard menu title inset rather than padding it inside a box.
+            let backdrop = NSRect(x: cellFrame.minX - MenuLayout.horizontalPadding + 5,
+                                  y: cellFrame.minY - 3,
+                                  width: MenuLayout.width - 10, height: cellFrame.height + 6)
+            NSBezierPath(roundedRect: backdrop, xRadius: 6, yRadius: 6).fill()
         }
 
         let paragraph = NSMutableParagraphStyle()
@@ -230,8 +235,8 @@ private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
         ]
         let nameHeight = NSAttributedString(string: name, attributes: nameAttributes).size().height
         (name as NSString).draw(
-            in: NSRect(x: cellFrame.minX + 10, y: cellFrame.midY - nameHeight / 2,
-                       width: cellFrame.width - (activeProfile.isEmpty ? 20 : 80), height: nameHeight),
+            in: NSRect(x: cellFrame.minX, y: cellFrame.midY - nameHeight / 2,
+                       width: cellFrame.width - (activeProfile.isEmpty ? 0 : 70), height: nameHeight),
             withAttributes: nameAttributes
         )
 
