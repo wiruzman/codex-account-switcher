@@ -14,7 +14,7 @@ All downloads are available on the [GitHub Releases page](https://github.com/Pur
 
 ![Codex Account Switcher with the active account and usage](docs/screenshot-menu.png)
 
-![Expanded account dropdown with usage, reset times, and Add account](docs/screenshot-menu-expanded.png)
+![Native accounts submenu with usage, reset times, and Add account](docs/screenshot-menu-expanded.png)
 
 Screenshots use example accounts and usage data.
 
@@ -102,13 +102,15 @@ After launch, the menu bar item shows the switcher icon and the current profile'
 
 From the menu, you can:
 
-- Open the active account dropdown to switch to another saved profile
-- Compare other accounts' remaining usage and reset times in the dropdown
+- Open the active account's native submenu to switch to another saved profile
+- Compare other accounts' remaining usage and reset times in the submenu
 - Add a new saved profile with the full-width **+ Add account** row at the bottom
 - View the active profile's available usage windows, including named supplemental limits when provided
 - Refresh usage from the menu
 - Open the profile data folder
 - Quit the switcher
+
+Hover over the active account box, or select it with the arrow keys and press Right Arrow, to open the accounts submenu beside the menu. The app keeps native macOS menu navigation and dismissal behavior.
 
 ## Data Location
 
@@ -184,7 +186,7 @@ This keeps `auth.json` and Codex Desktop state in the latest format.
 
 ![Codex Account Switcher 当前账户和用量](docs/screenshot-menu.png)
 
-![展开的账户下拉菜单，显示用量、重置时间和添加账户按钮](docs/screenshot-menu-expanded.png)
+![原生账户子菜单，显示用量、重置时间和添加账户按钮](docs/screenshot-menu-expanded.png)
 
 截图使用示例账户和用量数据。
 

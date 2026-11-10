@@ -158,8 +158,8 @@ private final class PlainTextButton: NSButton {
     }
 }
 
-// The account box opens a native menu, preserving Escape, arrows and type-select.
-private final class AccountDropdownCell: NSButtonCell {
+// Draw the account styling while NSMenu owns submenu tracking and navigation.
+private final class AccountSubmenuCell: NSCell {
     var activeProfile = ""
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
@@ -193,7 +193,7 @@ private final class AccountDropdownCell: NSButtonCell {
             )
         }
 
-        if let image = NSImage(systemSymbolName: isHighlighted ? "chevron.up" : "chevron.down", accessibilityDescription: nil) {
+        if let image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil) {
             let tinted = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
                 image.draw(in: rect)
                 NSColor.white.setFill()
@@ -205,104 +205,29 @@ private final class AccountDropdownCell: NSButtonCell {
     }
 }
 
-private final class AccountDropdownMenuView: NSView {
-    let button: NSButton
-    private let accountsMenu: NSMenu
+private final class AccountSubmenuView: NSView {
+    private let accountCell: AccountSubmenuCell
 
     override var isFlipped: Bool { true }
 
-    init(activeProfile: String, accountsMenu: NSMenu) {
-        self.accountsMenu = accountsMenu
-        button = NSButton(frame: NSRect(x: 16, y: 16, width: 248, height: 40))
+    init(activeProfile: String) {
+        accountCell = AccountSubmenuCell(textCell: activeProfile.isEmpty ? "Accounts" : activeProfile)
+        accountCell.activeProfile = activeProfile
         super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 66))
-
-        let cell = AccountDropdownCell(textCell: activeProfile.isEmpty ? "Accounts" : activeProfile)
-        cell.activeProfile = activeProfile
-        cell.isBordered = false
-        button.cell = cell
-        button.setButtonType(.momentaryChange)
-        button.target = self
-        button.action = #selector(showAccounts)
-        button.toolTip = activeProfile.isEmpty ? "Choose or add an account" : "Active account: \(activeProfile)"
-        button.setAccessibilityLabel("Accounts")
-        button.setAccessibilityValue(activeProfile.isEmpty ? "No active account" : activeProfile)
-        button.setAccessibilityHelp("Show other accounts and Add account")
-        addSubview(button)
+        autoresizingMask = [.width]
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menuItem)
+        setAccessibilityLabel("Accounts")
+        setAccessibilityValue(activeProfile.isEmpty ? "No active account" : activeProfile)
+        setAccessibilityHelp("Open the accounts submenu")
     }
 
     required init?(coder: NSCoder) { nil }
 
-    @objc private func showAccounts() {
-        button.highlight(true)
-        defer { button.highlight(false) }
-        let origin = NSPoint(x: button.frame.minX, y: button.frame.maxY + 4)
-        accountsMenu.popUp(positioning: nil, at: origin, in: self)
+    // The native menu handles hover, clicks and keyboard navigation for this row.
+    override func draw(_ dirtyRect: NSRect) {
+        accountCell.draw(withFrame: NSRect(x: 16, y: 16, width: bounds.width - 32, height: 40), in: self)
     }
-}
-
-// A normal view hierarchy lets the account dropdown track its own native menu.
-// Embedding a pull-down inside another tracking NSMenu swallows its activation.
-private final class MenuPopoverController: NSViewController {
-    private let sourceMenu: NSMenu
-
-    init(menu: NSMenu) {
-        self.sourceMenu = menu
-        super.init(nibName: nil, bundle: nil)
-        let content = FlippedMenuView(frame: .zero)
-        var y: CGFloat = 0
-        for item in menu.items {
-            if let custom = item.view {
-                // Release native menu layout ownership before reusing the view.
-                item.view = nil
-                custom.frame.origin = NSPoint(x: 0, y: y)
-                content.addSubview(custom)
-                y += custom.frame.height
-            } else if item.isSeparatorItem {
-                let separator = NSBox(frame: NSRect(x: 16, y: y + 4, width: 248, height: 1))
-                separator.boxType = .separator
-                content.addSubview(separator)
-                y += 9
-            } else if !item.isEnabled {
-                let label = NSTextField(wrappingLabelWithString: item.title)
-                label.font = .systemFont(ofSize: 12)
-                label.textColor = .secondaryLabelColor
-                let size = label.sizeThatFits(NSSize(width: 248, height: CGFloat.greatestFiniteMagnitude))
-                label.frame = NSRect(x: 16, y: y + 4, width: 248, height: ceil(size.height))
-                content.addSubview(label)
-                y += label.frame.height + 8
-            } else {
-                let button = NSButton(title: item.title, target: item.target, action: item.action)
-                button.frame = NSRect(x: 12, y: y, width: 256, height: 26)
-                button.isBordered = false
-                button.alignment = .left
-                button.font = .systemFont(ofSize: 12)
-                button.isEnabled = item.isEnabled
-                button.keyEquivalent = item.keyEquivalent
-                button.keyEquivalentModifierMask = item.keyEquivalentModifierMask
-                content.addSubview(button)
-                y += 26
-            }
-        }
-        content.frame.size = NSSize(width: 280, height: y + 8)
-        let maximumHeight = (NSScreen.main?.visibleFrame.height ?? 800) - 80
-        if content.frame.height > maximumHeight {
-            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 280, height: maximumHeight))
-            scroll.drawsBackground = false
-            scroll.hasVerticalScroller = true
-            scroll.autohidesScrollers = true
-            scroll.documentView = content
-            view = scroll
-        } else {
-            view = content
-        }
-        preferredContentSize = view.frame.size
-    }
-
-    required init?(coder: NSCoder) { nil }
-}
-
-private final class FlippedMenuView: NSView {
-    override var isFlipped: Bool { true }
 }
 
 // Menu items retain their native title/action for keyboard navigation and type-select.
@@ -312,7 +237,6 @@ private final class AccountMenuItemView: NSView {
     private var hoverTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
 
     init(title: String, details: [String] = [], symbol: String? = nil) {
         let width: CGFloat = 248
@@ -396,17 +320,14 @@ private final class AccountMenuItemView: NSView {
         activate()
     }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 49 { activate() }
-        else { super.keyDown(with: event) }
-    }
-
     override func accessibilityPerformPress() -> Bool { activate() }
 
     @discardableResult private func activate() -> Bool {
         guard let item = enclosingMenuItem, item.isEnabled, let action = item.action else { return false }
-        item.menu?.cancelTracking()
-        // Let the dropdown finish tracking before showing a switch/capture alert.
+        var rootMenu = item.menu
+        while let parent = rootMenu?.supermenu { rootMenu = parent }
+        rootMenu?.cancelTracking()
+        // Let native menu tracking end before showing a switch/capture alert.
         DispatchQueue.main.async { NSApp.sendAction(action, to: item.target, from: item) }
         return true
     }
@@ -904,9 +825,8 @@ final class UsageFetcher {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private let menuPopover = NSPopover()
     private let scriptPath: String
     private let usageFetcher = UsageFetcher()
     private var usageByProfile: [String: UsageSnapshot] = [:]
@@ -945,11 +865,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard !terminateIfAnotherInstanceIsRunning() else { return }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(toggleMenu)
-        menuPopover.behavior = .transient
-        menuPopover.animates = false
-        menuPopover.delegate = self
         configureStatusItemIcon()
         loadUsageCache()
         rebuildMenu()
@@ -974,21 +889,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func rebuildMenu() {
+        let active = activeProfile()
+        statusItem.menu = makeMenu(profiles: profileNames(), activeProfile: active)
+        updateStatusBarTitle(activeProfile: active)
+    }
+
+    private func makeMenu(profiles: [String], activeProfile: String) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let active = activeProfile()
-        let profiles = profileNames()
 
-        let selector = AccountDropdownMenuView(
-            activeProfile: active,
-            accountsMenu: accountsDropdown(profiles: profiles, activeProfile: active)
-        )
-        let selectorItem = NSMenuItem(title: "Accounts", action: nil, keyEquivalent: "")
-        selectorItem.view = selector
+        let selectorItem = NSMenuItem(title: activeProfile.isEmpty ? "Accounts" : activeProfile, action: nil, keyEquivalent: "")
+        selectorItem.submenu = accountsSubmenu(profiles: profiles, activeProfile: activeProfile)
+        selectorItem.view = AccountSubmenuView(activeProfile: activeProfile)
         menu.addItem(selectorItem)
 
-        if !active.isEmpty {
-            addUsageItems(to: menu, snapshot: usageByProfile[active])
+        if !activeProfile.isEmpty {
+            addUsageItems(to: menu, snapshot: usageByProfile[activeProfile])
         }
 
         menu.addItem(.separator())
@@ -996,22 +912,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "About", action: #selector(showAbout)))
         menu.addItem(makeItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
-
-        menuPopover.contentViewController = MenuPopoverController(menu: menu)
-        updateStatusBarTitle(activeProfile: active)
-    }
-
-    @objc private func toggleMenu() {
-        if menuPopover.isShown { menuPopover.performClose(nil); return }
-        rebuildMenu()
-        guard let button = statusItem.button else { return }
-        menuPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        menuPopover.contentViewController?.view.window?.makeKey()
-        button.state = .on
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        statusItem.button?.state = .off
+        return menu
     }
 
     private func makeItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
@@ -1023,7 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return item
     }
 
-    private func accountsDropdown(profiles: [String], activeProfile: String) -> NSMenu {
+    private func accountsSubmenu(profiles: [String], activeProfile: String) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.minimumWidth = 248
@@ -1072,7 +973,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func confirmSwitch(to profile: String) {
-        menuPopover.performClose(nil)
+        statusItem.menu?.cancelTracking()
 
         guard profile != activeProfile() else { return }
         let alert = NSAlert()
@@ -1096,7 +997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func captureCurrent() {
-        menuPopover.performClose(nil)
+        statusItem.menu?.cancelTracking()
 
         let alert = NSAlert()
         alert.messageText = "Capture Current Codex Account"
@@ -1125,18 +1026,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func refreshNow() {
-        menuPopover.performClose(nil)
+        statusItem.menu?.cancelTracking()
         rebuildMenu()
         refreshUsage()
     }
 
     @objc private func openProfilesFolder() {
-        menuPopover.performClose(nil)
+        statusItem.menu?.cancelTracking()
         _ = run(["open-folder"])
     }
 
     @objc private func showAbout() {
-        menuPopover.performClose(nil)
+        statusItem.menu?.cancelTracking()
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center

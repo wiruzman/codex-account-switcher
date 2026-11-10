@@ -34,8 +34,13 @@ extension AppDelegate {
         assert(accountUsageDetails("expired") == ["Sign in to Codex again"])
 
         for profiles in [[], ["personal"], ["personal", "work"], ["personal", "work", "team", "extra", "expired"]] {
-            let menu = accountsDropdown(profiles: profiles, activeProfile: "personal")
-            let selector = AccountDropdownMenuView(activeProfile: "personal", accountsMenu: menu)
+            let main = makeMenu(profiles: profiles, activeProfile: "personal")
+            let accountItem = main.items[0]
+            assert(accountItem.title == "personal")
+            assert(accountItem.hasSubmenu, "Accounts must use native submenu tracking")
+            let menu = accountItem.submenu!
+            assert(menu.supermenu === main)
+            let selector = accountItem.view as! AccountSubmenuView
             let choices = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem }
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])
             assert(choices.last?.view?.frame.width == 248)
@@ -44,32 +49,24 @@ extension AppDelegate {
                 assert(item.representedObject as? String == item.title)
                 assert(item.action == #selector(switchProfile(_:)))
                 assert(item.view?.accessibilityValue() as? String == accountUsageDetails(item.title).joined(separator: ", "))
+                assert(item.view?.acceptsFirstResponder == false, "Native menus must own arrow-key navigation")
             }
-            let cell = selector.button.cell as! AccountDropdownCell
-            assert(cell.activeProfile == "personal")
-            assert(selector.subviews.count == 1, "Active usage belongs below the selector")
+            assert(selector.accessibilityValue() as? String == "personal")
+            assert(selector.subviews.isEmpty, "The account row must not contain an interactive nested control")
+            let folder = main.item(withTitle: "Open Profiles Folder")!
+            assert(folder.view == nil && folder.keyEquivalent == "o")
+            let quit = main.item(withTitle: "Quit")!
+            assert(quit.view == nil && quit.keyEquivalent == "q")
+            assert(quit.keyEquivalentModifierMask == [.command])
         }
-        let empty = accountsDropdown(profiles: [], activeProfile: "")
-        let selector = AccountDropdownMenuView(activeProfile: "", accountsMenu: empty)
-        assert(selector.button.accessibilityValue() as? String == "No active account")
+        let emptyMain = makeMenu(profiles: [], activeProfile: "")
+        let empty = emptyMain.items[0].submenu!
+        let selector = emptyMain.items[0].view as! AccountSubmenuView
+        assert(selector.accessibilityValue() as? String == "No active account")
         assert(empty.items.filter { !$0.isHidden }.map(\.title) == ["Add account"])
-        let orphan = accountsDropdown(profiles: ["work"], activeProfile: "unsaved")
+        let orphan = accountsSubmenu(profiles: ["work"], activeProfile: "unsaved")
         assert(orphan.items.filter { !$0.isSeparatorItem }.map(\.title) == ["work", "Add account"])
 
-        let contentMenu = NSMenu()
-        let accountItem = NSMenuItem()
-        accountItem.view = AccountDropdownMenuView(activeProfile: "personal", accountsMenu: empty)
-        contentMenu.addItem(accountItem)
-        let usageItem = NSMenuItem()
-        usageItem.view = UsageBarsMenuView(rows: [UsageBarRow(title: "Session", usedPercent: 28,
-            resetPercent: 43, resetText: "2h 51m to reset")], updatedText: "Updated just now",
-            target: nil, refreshAction: #selector(refreshNow))
-        contentMenu.addItem(usageItem)
-        let controller = MenuPopoverController(menu: contentMenu)
-        contentMenu.update()
-        let views = controller.view.subviews
-        assert(views[1].frame.minY >= views[0].frame.maxY, "Usage must stay below the account selector")
-        assert(accountItem.view == nil && usageItem.view == nil, "Native menus must release the transferred views")
         print("Account dropdown checks passed")
     }
 }
