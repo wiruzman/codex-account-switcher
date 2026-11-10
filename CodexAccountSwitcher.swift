@@ -158,6 +158,26 @@ private final class PlainTextButton: NSButton {
     }
 }
 
+private enum MenuLayout {
+    static let width: CGFloat = 280
+    static let horizontalPadding: CGFloat = 16
+    static let contentWidth = width - horizontalPadding * 2
+    static let itemFont = NSFont.menuFont(ofSize: 0)
+    static let titleDetailGap: CGFloat = 4
+    static let detailGap: CGFloat = 2
+    static let accountBoxHeight: CGFloat = 40
+
+    // Match the space surrounding a standard native menu item's text.
+    static let verticalPadding: CGFloat = {
+        let cell = NSMenuItemCell(textCell: "Menu item")
+        cell.menuItem = NSMenuItem(title: "Menu item", action: nil, keyEquivalent: "")
+        cell.font = itemFont
+        let size = cell.cellSize
+        let titleRect = cell.titleRect(forBounds: NSRect(origin: .zero, size: size))
+        return max(0, (ceil(size.height) - ceil(titleRect.height)) / 2)
+    }()
+}
+
 // Draw the account styling while NSMenu owns submenu tracking and navigation.
 private final class AccountSubmenuCell: NSCell {
     var activeProfile = ""
@@ -213,7 +233,8 @@ private final class AccountSubmenuView: NSView {
     init(activeProfile: String) {
         accountCell = AccountSubmenuCell(textCell: activeProfile.isEmpty ? "Accounts" : activeProfile)
         accountCell.activeProfile = activeProfile
-        super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 66))
+        super.init(frame: NSRect(x: 0, y: 0, width: MenuLayout.width,
+                                 height: MenuLayout.accountBoxHeight + MenuLayout.verticalPadding * 2))
         autoresizingMask = [.width]
         setAccessibilityElement(true)
         setAccessibilityRole(.menuItem)
@@ -226,59 +247,62 @@ private final class AccountSubmenuView: NSView {
 
     // The native menu handles hover, clicks and keyboard navigation for this row.
     override func draw(_ dirtyRect: NSRect) {
-        accountCell.draw(withFrame: NSRect(x: 16, y: 16, width: bounds.width - 32, height: 40), in: self)
+        accountCell.draw(withFrame: NSRect(x: MenuLayout.horizontalPadding, y: MenuLayout.verticalPadding,
+                                          width: bounds.width - MenuLayout.horizontalPadding * 2,
+                                          height: MenuLayout.accountBoxHeight), in: self)
     }
 }
 
 // Menu items retain their native title/action for keyboard navigation and type-select.
 // The view supplies wrapped usage details and a full-width pointer target.
 private final class AccountMenuItemView: NSView {
-    private static let horizontalPadding: CGFloat = 16
     private var isHovered = false
     private var hoverTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
 
     init(title: String, details: [String] = [], symbol: String? = nil) {
-        let width: CGFloat = 248
-        let textX = Self.horizontalPadding + (symbol == nil ? 0 : 24)
-        let textWidth = width - textX - Self.horizontalPadding
-        let detailFont = NSFont.systemFont(ofSize: 11)
-        var height: CGFloat = details.isEmpty ? 36 : 28
-        let detailHeights = details.map { detail -> CGFloat in
-            let rect = (detail as NSString).boundingRect(
-                with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: detailFont]
-            )
-            return ceil(rect.height)
+        let width = MenuLayout.contentWidth
+        let textX = MenuLayout.horizontalPadding + (symbol == nil ? 0 : 24)
+        let textWidth = width - textX - MenuLayout.horizontalPadding
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = details.isEmpty ? MenuLayout.itemFont : .systemFont(ofSize: 14, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        let titleHeight = ceil(titleLabel.cell!.cellSize.height)
+        let detailLabels = details.map { detail -> NSTextField in
+            let label = NSTextField(wrappingLabelWithString: detail)
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            return label
         }
-        height += detailHeights.reduce(0) { $0 + $1 + 2 }
+        let detailHeights = detailLabels.map { label in
+            ceil(label.sizeThatFits(NSSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)).height)
+        }
+        let contentHeight = titleHeight
+            + (details.isEmpty ? 0 : MenuLayout.titleDetailGap)
+            + detailHeights.reduce(0, +)
+            + CGFloat(max(details.count - 1, 0)) * MenuLayout.detailGap
+        let height = max(contentHeight, symbol == nil ? 0 : 16) + MenuLayout.verticalPadding * 2
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: height))
         autoresizingMask = [.width]
 
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: details.isEmpty ? 12 : 14, weight: .medium)
-        label.lineBreakMode = .byTruncatingTail
-        label.frame = NSRect(x: textX, y: details.isEmpty ? 9 : 6, width: textWidth, height: 18)
-        label.autoresizingMask = [.width]
-        label.setAccessibilityElement(false)
-        addSubview(label)
-
-        var y: CGFloat = 27
-        for (index, detail) in details.enumerated() {
-            let label = NSTextField(wrappingLabelWithString: detail)
-            label.font = detailFont
-            label.textColor = .secondaryLabelColor
+        var y = (height - contentHeight) / 2
+        titleLabel.frame = NSRect(x: textX, y: y, width: textWidth, height: titleHeight)
+        titleLabel.autoresizingMask = [.width]
+        titleLabel.setAccessibilityElement(false)
+        addSubview(titleLabel)
+        y += titleHeight + MenuLayout.titleDetailGap
+        for (index, label) in detailLabels.enumerated() {
             label.frame = NSRect(x: textX, y: y, width: textWidth, height: detailHeights[index])
             label.autoresizingMask = [.width]
             label.setAccessibilityElement(false)
             addSubview(label)
-            y += detailHeights[index] + 2
+            y += detailHeights[index] + MenuLayout.detailGap
         }
 
         if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let icon = NSImageView(frame: NSRect(x: Self.horizontalPadding, y: (height - 16) / 2, width: 16, height: 16))
+            let icon = NSImageView(frame: NSRect(x: MenuLayout.horizontalPadding, y: (height - 16) / 2, width: 16, height: 16))
             icon.image = image
             icon.contentTintColor = .labelColor
             icon.setAccessibilityElement(false)
@@ -335,8 +359,8 @@ private final class AccountMenuItemView: NSView {
 }
 
 private final class UsageBarsMenuView: NSView {
-    private static let menuWidth: CGFloat = 280
-    private static let horizontalPadding: CGFloat = 16
+    private static let menuWidth = MenuLayout.width
+    private static let horizontalPadding = MenuLayout.horizontalPadding
     private static let topPadding: CGFloat = 0
     private static let rowHeight: CGFloat = 58
     private static let footerHeight: CGFloat = 18
@@ -928,7 +952,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func accountsSubmenu(profiles: [String], activeProfile: String) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.minimumWidth = 248
+        menu.minimumWidth = MenuLayout.contentWidth
         let alternatives = profiles.filter { $0 != activeProfile }
         for profile in alternatives {
             let details = accountUsageDetails(profile)

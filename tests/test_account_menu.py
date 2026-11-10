@@ -45,6 +45,19 @@ extension AppDelegate {
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])
             assert(choices.last?.view?.frame.width == 248)
             assert(choices.last?.action == #selector(captureCurrent))
+            for item in choices {
+                let row = item.view!
+                let labels = row.subviews.compactMap { $0 as? NSTextField }
+                let top = labels.map { $0.frame.minY }.min()!
+                let bottom = row.bounds.height - labels.map { $0.frame.maxY }.max()!
+                assert(abs(top - bottom) < 0.01, "Account rows must have equal top and bottom padding")
+                assert(labels.allSatisfy { $0.frame.minY >= 0 && $0.frame.maxY <= row.bounds.height })
+            }
+            let nativeCell = NSMenuItemCell(textCell: "Open Profiles Folder")
+            nativeCell.menuItem = main.item(withTitle: "Open Profiles Folder")
+            nativeCell.font = main.font
+            assert(choices.last?.view?.frame.height == nativeCell.cellSize.height,
+                   "Add account must have the same row height as a native menu action")
             for item in choices.dropLast() {
                 assert(item.representedObject as? String == item.title)
                 assert(item.action == #selector(switchProfile(_:)))
