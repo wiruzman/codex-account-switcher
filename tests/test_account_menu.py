@@ -42,7 +42,7 @@ extension AppDelegate {
             assert(menu.supermenu === main)
             assert(accountItem.view == nil, "AppKit must draw the native submenu caret")
             let attachment = accountItem.attributedTitle?.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
-            assert(attachment?.image != nil, "The native row must retain the styled account title")
+            assert(attachment?.attachmentCell is AccountTitleAttachmentCell, "The native row must retain the styled account title")
             assert(main.size.width == 280, "The native caret must not widen the menu")
             let choices = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem }
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])

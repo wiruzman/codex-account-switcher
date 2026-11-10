@@ -193,11 +193,26 @@ private func makeNativeMenuHighlight(frame: NSRect) -> NSVisualEffectView {
     return highlight
 }
 
-// Draw the account styling while NSMenu owns submenu tracking and navigation.
-private final class AccountSubmenuCell: NSCell {
+// The attachment occupies only the native title column, but draws the account
+// background through the trailing column. The standard menu item still owns its
+// caret, selection, accessibility and keyboard navigation.
+private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
     var activeProfile = ""
+    weak var menuItem: NSMenuItem?
+    var titleColumnWidth: CGFloat = MenuLayout.contentWidth
 
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+    override var cellSize: NSSize {
+        NSSize(width: titleColumnWidth, height: MenuLayout.accountBoxHeight)
+    }
+
+    override func cellBaselineOffset() -> NSPoint {
+        NSPoint(x: 0, y: MenuLayout.itemFont.descender)
+    }
+
+    override func draw(withFrame titleFrame: NSRect, in controlView: NSView?) {
+        let cellFrame = NSRect(x: titleFrame.minX, y: titleFrame.minY,
+                               width: MenuLayout.contentWidth, height: titleFrame.height)
+        let isHighlighted = menuItem?.isHighlighted == true
         let textColor = isHighlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
         let secondaryColor = isHighlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
         if !isHighlighted {
@@ -216,7 +231,7 @@ private final class AccountSubmenuCell: NSCell {
         let nameHeight = NSAttributedString(string: name, attributes: nameAttributes).size().height
         (name as NSString).draw(
             in: NSRect(x: cellFrame.minX + 10, y: cellFrame.midY - nameHeight / 2,
-                       width: cellFrame.width - (activeProfile.isEmpty ? 20 : 64), height: nameHeight),
+                       width: cellFrame.width - (activeProfile.isEmpty ? 20 : 80), height: nameHeight),
             withAttributes: nameAttributes
         )
 
@@ -227,7 +242,7 @@ private final class AccountSubmenuCell: NSCell {
             ]
             let size = NSAttributedString(string: "Active", attributes: attributes).size()
             ("Active" as NSString).draw(
-                at: NSPoint(x: cellFrame.maxX - 10 - size.width, y: cellFrame.midY - size.height / 2),
+                at: NSPoint(x: cellFrame.maxX - 18 - size.width, y: cellFrame.midY - size.height / 2),
                 withAttributes: attributes
             )
         }
@@ -921,8 +936,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(makeItem(title: "About", action: #selector(showAbout)))
         menu.addItem(makeItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
-        // Keep the styled title in the native title column. AppKit owns the
-        // submenu caret, its geometry, highlighting and keyboard navigation.
+        // Measure AppKit's reserved trailing column without widening the menu.
+        // The attachment draws across it while retaining native title metrics.
         let menuWidth = menu.size.width
         setAccountTitle(on: selectorItem, profile: activeProfile, width: MenuLayout.contentWidth)
         let overflow = max(0, menu.size.width - menuWidth)
@@ -934,35 +949,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setAccountTitle(on item: NSMenuItem, profile: String, width: CGFloat) {
-        let image = NSImage(size: NSSize(width: width, height: MenuLayout.accountBoxHeight), flipped: true) { [weak item] rect in
-            let cell = AccountSubmenuCell(textCell: profile)
-            cell.activeProfile = profile
-            cell.isHighlighted = item?.isHighlighted == true
-            cell.draw(withFrame: rect, in: NSView(frame: rect))
-            return true
-        }
-        image.cacheMode = .never
-        image.accessibilityDescription = profile.isEmpty ? "Accounts" : "Active account: \(profile)"
         let attachment = NSTextAttachment()
-        attachment.image = image
-        attachment.bounds = NSRect(x: 0, y: MenuLayout.itemFont.descender,
-                                   width: width, height: MenuLayout.accountBoxHeight)
+        let cell = AccountTitleAttachmentCell(textCell: profile)
+        cell.activeProfile = profile
+        cell.menuItem = item
+        cell.titleColumnWidth = width
+        attachment.attachmentCell = cell
         let title = NSMutableAttributedString(attachment: attachment)
         title.addAttribute(.font, value: MenuLayout.itemFont, range: NSRange(location: 0, length: title.length))
         item.attributedTitle = title
         // Retain a plain title for accessibility and native type-select.
         item.title = profile.isEmpty ? "Accounts" : profile
-        item.toolTip = image.accessibilityDescription
+        item.toolTip = profile.isEmpty ? "Accounts" : "Active account: \(profile)"
     }
 
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
         // Custom account content follows the same native highlight state as ordinary items.
         for menuItem in menu.items {
             menuItem.view?.needsDisplay = true
-            if let title = menuItem.attributedTitle, title.length > 0,
-               let attachment = title.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment {
-                attachment.image?.recache()
-            }
         }
     }
 
