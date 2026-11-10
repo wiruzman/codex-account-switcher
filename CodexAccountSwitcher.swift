@@ -393,7 +393,7 @@ private final class AccountMenuItemView: NSView {
 private final class UsageBarsMenuView: NSView {
     private static let menuWidth = MenuLayout.width
     private static let horizontalPadding = MenuLayout.horizontalPadding
-    private static let topPadding: CGFloat = 0
+    private static let topPadding: CGFloat = 8
     private static let rowHeight: CGFloat = 58
     private static let footerHeight: CGFloat = 18
     private static let barHeight: CGFloat = 6
@@ -960,6 +960,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         selectorItem.submenu = accountsSubmenu(profiles: profiles, activeProfile: activeProfile)
         selectorItem.view = AccountSubmenuView(activeProfile: activeProfile)
         menu.addItem(selectorItem)
+
+        menu.addItem(.separator())
+        let statusHeader: NSMenuItem
+        if #available(macOS 14.0, *) {
+            statusHeader = .sectionHeader(title: "Status")
+        } else {
+            statusHeader = NSMenuItem(title: "Status", action: nil, keyEquivalent: "")
+            statusHeader.attributedTitle = NSAttributedString(string: "Status", attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ])
+            statusHeader.isEnabled = false
+        }
+        menu.addItem(statusHeader)
 
         if !activeProfile.isEmpty {
             addUsageItems(to: menu, snapshot: usageByProfile[activeProfile])
