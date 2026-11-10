@@ -235,7 +235,8 @@ private final class AccountDropdownMenuView: NSView {
     @objc private func showAccounts() {
         button.highlight(true)
         defer { button.highlight(false) }
-        accountsMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: button)
+        let origin = NSPoint(x: button.frame.minX, y: button.frame.maxY + 4)
+        accountsMenu.popUp(positioning: nil, at: origin, in: self)
     }
 }
 
@@ -251,6 +252,8 @@ private final class MenuPopoverController: NSViewController {
         var y: CGFloat = 0
         for item in menu.items {
             if let custom = item.view {
+                // Release native menu layout ownership before reusing the view.
+                item.view = nil
                 custom.frame.origin = NSPoint(x: 0, y: y)
                 content.addSubview(custom)
                 y += custom.frame.height

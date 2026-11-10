@@ -55,6 +55,21 @@ extension AppDelegate {
         assert(empty.items.filter { !$0.isHidden }.map(\.title) == ["Add account"])
         let orphan = accountsDropdown(profiles: ["work"], activeProfile: "unsaved")
         assert(orphan.items.filter { !$0.isSeparatorItem }.map(\.title) == ["work", "Add account"])
+
+        let contentMenu = NSMenu()
+        let accountItem = NSMenuItem()
+        accountItem.view = AccountDropdownMenuView(activeProfile: "personal", accountsMenu: empty)
+        contentMenu.addItem(accountItem)
+        let usageItem = NSMenuItem()
+        usageItem.view = UsageBarsMenuView(rows: [UsageBarRow(title: "Session", usedPercent: 28,
+            resetPercent: 43, resetText: "2h 51m to reset")], updatedText: "Updated just now",
+            target: nil, refreshAction: #selector(refreshNow))
+        contentMenu.addItem(usageItem)
+        let controller = MenuPopoverController(menu: contentMenu)
+        contentMenu.update()
+        let views = controller.view.subviews
+        assert(views[1].frame.minY >= views[0].frame.maxY, "Usage must stay below the account selector")
+        assert(accountItem.view == nil && usageItem.view == nil, "Native menus must release the transferred views")
         print("Account dropdown checks passed")
     }
 }

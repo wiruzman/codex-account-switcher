@@ -12,7 +12,11 @@ All downloads are available on the [GitHub Releases page](https://github.com/Pur
 
 ## Screenshot
 
-![Codex Account Switcher menu screenshot](docs/screenshot-menu.png)
+![Codex Account Switcher with the active account and usage](docs/screenshot-menu.png)
+
+![Expanded account dropdown with usage, reset times, and Add account](docs/screenshot-menu-expanded.png)
+
+Screenshots use example accounts and usage data.
 
 A local-first macOS menu bar app for switching between multiple OpenAI Codex accounts.
 
@@ -178,7 +182,11 @@ This keeps `auth.json` and Codex Desktop state in the latest format.
 
 ## 应用截图
 
-![Codex Account Switcher 菜单截图](docs/screenshot-menu.png)
+![Codex Account Switcher 当前账户和用量](docs/screenshot-menu.png)
+
+![展开的账户下拉菜单，显示用量、重置时间和添加账户按钮](docs/screenshot-menu-expanded.png)
+
+截图使用示例账户和用量数据。
 
 一个本地优先的 macOS 菜单栏工具，用来在多个 OpenAI Codex 账号之间快速切换。
 
