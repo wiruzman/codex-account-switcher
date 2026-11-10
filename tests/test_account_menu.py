@@ -40,7 +40,10 @@ extension AppDelegate {
             assert(accountItem.hasSubmenu, "Accounts must use native submenu tracking")
             let menu = accountItem.submenu!
             assert(menu.supermenu === main)
-            let selector = accountItem.view as! AccountSubmenuView
+            assert(accountItem.view == nil, "AppKit must draw the native submenu caret")
+            let attachment = accountItem.attributedTitle?.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+            assert(attachment?.image != nil, "The native row must retain the styled account title")
+            assert(main.size.width == 280, "The native caret must not widen the menu")
             let choices = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem }
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])
             assert(menu.minimumWidth == 248)
@@ -62,9 +65,6 @@ extension AppDelegate {
                 assert(item.view?.accessibilityValue() as? String == accountUsageDetails(item.title).joined(separator: ", "))
                 assert(item.view?.acceptsFirstResponder == false, "Native menus must own arrow-key navigation")
             }
-            assert(selector.accessibilityValue() as? String == "personal")
-            assert(!selector.subviews.contains { $0 is NSControl },
-                   "The account row must not contain an interactive nested control")
             let folder = main.item(withTitle: "Open Profiles Folder")!
             assert(folder.view == nil && folder.keyEquivalent == "o")
             let quit = main.item(withTitle: "Quit")!
@@ -73,8 +73,8 @@ extension AppDelegate {
         }
         let emptyMain = makeMenu(profiles: [], activeProfile: "")
         let empty = emptyMain.items[0].submenu!
-        let selector = emptyMain.items[0].view as! AccountSubmenuView
-        assert(selector.accessibilityValue() as? String == "No active account")
+        assert(emptyMain.items[0].view == nil)
+        assert(emptyMain.items[0].title == "Accounts")
         assert(empty.items.filter { !$0.isHidden }.map(\.title) == ["Add account"])
         let orphan = accountsSubmenu(profiles: ["work"], activeProfile: "unsaved")
         assert(orphan.items.filter { !$0.isSeparatorItem }.map(\.title) == ["work", "Add account"])
