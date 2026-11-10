@@ -43,21 +43,19 @@ extension AppDelegate {
             let selector = accountItem.view as! AccountSubmenuView
             let choices = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem }
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])
-            assert(choices.last?.view?.frame.width == 248)
+            assert(menu.minimumWidth == 248)
+            assert(choices.last?.view == nil && choices.last?.image != nil,
+                   "Add account must use a native action row with a plus icon")
             assert(choices.last?.action == #selector(captureCurrent))
             for item in choices {
-                let row = item.view!
+                guard let row = item.view else { continue }
                 let labels = row.subviews.compactMap { $0 as? NSTextField }
                 let top = labels.map { $0.frame.minY }.min()!
                 let bottom = row.bounds.height - labels.map { $0.frame.maxY }.max()!
                 assert(abs(top - bottom) < 0.01, "Account rows must have equal top and bottom padding")
                 assert(labels.allSatisfy { $0.frame.minY >= 0 && $0.frame.maxY <= row.bounds.height })
             }
-            let nativeCell = NSMenuItemCell(textCell: "Open Profiles Folder")
-            nativeCell.menuItem = main.item(withTitle: "Open Profiles Folder")
-            nativeCell.font = main.font
-            assert(choices.last?.view?.frame.height == nativeCell.cellSize.height,
-                   "Add account must have the same row height as a native menu action")
+            assert(menu.font == main.font, "Native action rows must share the same system menu font")
             for item in choices.dropLast() {
                 assert(item.representedObject as? String == item.title)
                 assert(item.action == #selector(switchProfile(_:)))
@@ -65,7 +63,8 @@ extension AppDelegate {
                 assert(item.view?.acceptsFirstResponder == false, "Native menus must own arrow-key navigation")
             }
             assert(selector.accessibilityValue() as? String == "personal")
-            assert(selector.subviews.isEmpty, "The account row must not contain an interactive nested control")
+            assert(!selector.subviews.contains { $0 is NSControl },
+                   "The account row must not contain an interactive nested control")
             let folder = main.item(withTitle: "Open Profiles Folder")!
             assert(folder.view == nil && folder.keyEquivalent == "o")
             let quit = main.item(withTitle: "Quit")!

@@ -178,6 +178,21 @@ private enum MenuLayout {
     }()
 }
 
+private func makeNativeMenuHighlight(frame: NSRect) -> NSVisualEffectView {
+    let highlight = NSVisualEffectView(frame: frame)
+    highlight.material = .selection
+    highlight.blendingMode = .withinWindow
+    highlight.state = .active
+    highlight.isEmphasized = true
+    highlight.wantsLayer = true
+    highlight.layer?.cornerRadius = 6
+    highlight.layer?.masksToBounds = true
+    highlight.autoresizingMask = [.width]
+    highlight.isHidden = true
+    highlight.setAccessibilityElement(false)
+    return highlight
+}
+
 // Draw the account styling while NSMenu owns submenu tracking and navigation.
 private final class AccountSubmenuCell: NSCell {
     var activeProfile = ""
@@ -185,11 +200,10 @@ private final class AccountSubmenuCell: NSCell {
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
         let textColor = isHighlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
         let secondaryColor = isHighlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
-        let backgroundColor = isHighlighted
-            ? NSColor.selectedContentBackgroundColor
-            : NSColor.labelColor.withAlphaComponent(0.08)
-        backgroundColor.setFill()
-        NSBezierPath(roundedRect: cellFrame, xRadius: 4, yRadius: 4).fill()
+        if !isHighlighted {
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: cellFrame, xRadius: 4, yRadius: 4).fill()
+        }
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
@@ -230,7 +244,7 @@ private final class AccountSubmenuCell: NSCell {
     }
 }
 
-private final class AccountSubmenuView: NSView {
+private final class AccountSubmenuContentView: NSView {
     private let accountCell: AccountSubmenuCell
 
     override var isFlipped: Bool { true }
@@ -241,6 +255,33 @@ private final class AccountSubmenuView: NSView {
         super.init(frame: NSRect(x: 0, y: 0, width: MenuLayout.width,
                                  height: MenuLayout.accountBoxHeight + MenuLayout.verticalPadding * 2))
         autoresizingMask = [.width]
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        accountCell.isHighlighted = enclosingMenuItem?.isHighlighted == true
+        accountCell.draw(withFrame: NSRect(x: MenuLayout.horizontalPadding, y: MenuLayout.verticalPadding,
+                                          width: bounds.width - MenuLayout.horizontalPadding * 2,
+                                          height: MenuLayout.accountBoxHeight), in: self)
+    }
+}
+
+private final class AccountSubmenuView: NSView {
+    private let content: AccountSubmenuContentView
+    private let highlight: NSVisualEffectView
+
+    override var isFlipped: Bool { true }
+
+    init(activeProfile: String) {
+        content = AccountSubmenuContentView(activeProfile: activeProfile)
+        highlight = makeNativeMenuHighlight(frame: NSRect(x: MenuLayout.horizontalPadding, y: MenuLayout.verticalPadding,
+                                                          width: MenuLayout.contentWidth, height: MenuLayout.accountBoxHeight))
+        super.init(frame: content.frame)
+        autoresizingMask = [.width]
+        addSubview(highlight)
+        addSubview(content)
         setAccessibilityElement(true)
         setAccessibilityRole(.menuItem)
         setAccessibilityLabel("Accounts")
@@ -250,23 +291,23 @@ private final class AccountSubmenuView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    // The native menu handles hover, clicks and keyboard navigation for this row.
-    override func draw(_ dirtyRect: NSRect) {
-        accountCell.isHighlighted = enclosingMenuItem?.isHighlighted == true
-        accountCell.draw(withFrame: NSRect(x: MenuLayout.horizontalPadding, y: MenuLayout.verticalPadding,
-                                          width: bounds.width - MenuLayout.horizontalPadding * 2,
-                                          height: MenuLayout.accountBoxHeight), in: self)
+    override func viewWillDraw() {
+        highlight.isHidden = enclosingMenuItem?.isHighlighted != true
+        content.needsDisplay = true
+        super.viewWillDraw()
     }
 }
 
 // Menu items retain their native title/action for keyboard navigation and type-select.
 // The view supplies wrapped usage details and a full-width pointer target.
 private final class AccountMenuItemView: NSView {
+    private let highlight: NSVisualEffectView
+
     override var isFlipped: Bool { true }
 
-    init(title: String, details: [String] = [], symbol: String? = nil) {
+    init(title: String, details: [String] = []) {
         let width = MenuLayout.contentWidth
-        let textX = MenuLayout.horizontalPadding + (symbol == nil ? 0 : 24)
+        let textX = MenuLayout.horizontalPadding
         let textWidth = width - textX - MenuLayout.horizontalPadding
 
         let titleLabel = NSTextField(labelWithString: title)
@@ -286,9 +327,11 @@ private final class AccountMenuItemView: NSView {
             + (details.isEmpty ? 0 : MenuLayout.titleDetailGap)
             + detailHeights.reduce(0, +)
             + CGFloat(max(details.count - 1, 0)) * MenuLayout.detailGap
-        let height = max(contentHeight, symbol == nil ? 0 : 16) + MenuLayout.verticalPadding * 2
+        let height = contentHeight + MenuLayout.verticalPadding * 2
+        highlight = makeNativeMenuHighlight(frame: NSRect(x: 4, y: 0, width: width - 8, height: height))
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: height))
         autoresizingMask = [.width]
+        addSubview(highlight)
 
         var y = (height - contentHeight) / 2
         titleLabel.frame = NSRect(x: textX, y: y, width: textWidth, height: titleHeight)
@@ -304,13 +347,6 @@ private final class AccountMenuItemView: NSView {
             y += detailHeights[index] + MenuLayout.detailGap
         }
 
-        if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let icon = NSImageView(frame: NSRect(x: MenuLayout.horizontalPadding, y: (height - 16) / 2, width: 16, height: 16))
-            icon.image = image
-            icon.contentTintColor = .labelColor
-            icon.setAccessibilityElement(false)
-            addSubview(icon)
-        }
         toolTip = ([title] + details).joined(separator: "\n")
         setAccessibilityElement(true)
         setAccessibilityRole(.menuItem)
@@ -327,20 +363,13 @@ private final class AccountMenuItemView: NSView {
 
     override func viewWillDraw() {
         let highlighted = enclosingMenuItem?.isHighlighted == true
+        highlight.isHidden = !highlighted
         let textColor = highlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
         let secondaryColor = highlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
         let labels = subviews.compactMap { $0 as? NSTextField }
         labels.first?.textColor = textColor
         for label in labels.dropFirst() { label.textColor = secondaryColor }
-        for icon in subviews.compactMap({ $0 as? NSImageView }) { icon.contentTintColor = textColor }
         super.viewWillDraw()
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        if enclosingMenuItem?.isHighlighted == true {
-            NSColor.selectedContentBackgroundColor.setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
-        }
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -975,7 +1004,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if !alternatives.isEmpty { menu.addItem(.separator()) }
         let addItem = makeItem(title: "Add account", action: #selector(captureCurrent))
-        addItem.view = AccountMenuItemView(title: "Add account", symbol: "plus")
+        // Use the native row renderer, just like Open Profiles Folder, so the
+        // system controls action-row height, padding and hover appearance.
+        addItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        addItem.image?.size = NSSize(width: 16, height: 16)
+        addItem.image?.isTemplate = true
+        if #available(macOS 27.0, *) { addItem.preferredImageVisibility = .visible }
         menu.addItem(addItem)
         return menu
     }
