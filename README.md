@@ -98,8 +98,9 @@ After launch, the menu bar item shows the switcher icon and the current profile'
 
 From the menu, you can:
 
-- Switch accounts with profile cards
-- Add a new saved profile with the plus button
+- Open the active account dropdown to switch to another saved profile
+- Compare other accounts' remaining usage and reset times in the dropdown
+- Add a new saved profile with the full-width **+ Add account** row at the bottom
 - View the active profile's available usage windows, including named supplemental limits when provided
 - Refresh usage from the menu
 - Open the profile data folder
