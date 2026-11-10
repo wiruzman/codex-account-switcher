@@ -183,7 +183,12 @@ private final class AccountSubmenuCell: NSCell {
     var activeProfile = ""
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        NSColor.systemBlue.setFill()
+        let textColor = isHighlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+        let secondaryColor = isHighlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
+        let backgroundColor = isHighlighted
+            ? NSColor.selectedContentBackgroundColor
+            : NSColor.labelColor.withAlphaComponent(0.08)
+        backgroundColor.setFill()
         NSBezierPath(roundedRect: cellFrame, xRadius: 4, yRadius: 4).fill()
 
         let paragraph = NSMutableParagraphStyle()
@@ -191,7 +196,7 @@ private final class AccountSubmenuCell: NSCell {
         let name = activeProfile.isEmpty ? "Accounts" : activeProfile
         let nameAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: textColor,
             .paragraphStyle: paragraph
         ]
         let nameHeight = NSAttributedString(string: name, attributes: nameAttributes).size().height
@@ -204,7 +209,7 @@ private final class AccountSubmenuCell: NSCell {
         if !activeProfile.isEmpty {
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.white.withAlphaComponent(0.85)
+                .foregroundColor: secondaryColor
             ]
             let size = NSAttributedString(string: "Active", attributes: attributes).size()
             ("Active" as NSString).draw(
@@ -216,7 +221,7 @@ private final class AccountSubmenuCell: NSCell {
         if let image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil) {
             let tinted = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
                 image.draw(in: rect)
-                NSColor.white.setFill()
+                textColor.setFill()
                 rect.fill(using: .sourceIn)
                 return true
             }
@@ -247,6 +252,7 @@ private final class AccountSubmenuView: NSView {
 
     // The native menu handles hover, clicks and keyboard navigation for this row.
     override func draw(_ dirtyRect: NSRect) {
+        accountCell.isHighlighted = enclosingMenuItem?.isHighlighted == true
         accountCell.draw(withFrame: NSRect(x: MenuLayout.horizontalPadding, y: MenuLayout.verticalPadding,
                                           width: bounds.width - MenuLayout.horizontalPadding * 2,
                                           height: MenuLayout.accountBoxHeight), in: self)
@@ -256,9 +262,6 @@ private final class AccountSubmenuView: NSView {
 // Menu items retain their native title/action for keyboard navigation and type-select.
 // The view supplies wrapped usage details and a full-width pointer target.
 private final class AccountMenuItemView: NSView {
-    private var isHovered = false
-    private var hoverTrackingArea: NSTrackingArea?
-
     override var isFlipped: Bool { true }
 
     init(title: String, details: [String] = [], symbol: String? = nil) {
@@ -322,20 +325,20 @@ private final class AccountMenuItemView: NSView {
         super.hitTest(point) == nil ? nil : self
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        hoverTrackingArea = area
+    override func viewWillDraw() {
+        let highlighted = enclosingMenuItem?.isHighlighted == true
+        let textColor = highlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
+        let secondaryColor = highlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
+        let labels = subviews.compactMap { $0 as? NSTextField }
+        labels.first?.textColor = textColor
+        for label in labels.dropFirst() { label.textColor = secondaryColor }
+        for icon in subviews.compactMap({ $0 as? NSImageView }) { icon.contentTintColor = textColor }
+        super.viewWillDraw()
     }
 
-    override func mouseEntered(with event: NSEvent) { isHovered = true; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false; needsDisplay = true }
-
     override func draw(_ dirtyRect: NSRect) {
-        if isHovered || enclosingMenuItem?.isHighlighted == true {
-            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+        if enclosingMenuItem?.isHighlighted == true {
+            NSColor.selectedContentBackgroundColor.setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
         }
     }
@@ -850,7 +853,7 @@ final class UsageFetcher {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let scriptPath: String
     private let usageFetcher = UsageFetcher()
@@ -921,6 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu(profiles: [String], activeProfile: String) -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
         menu.autoenablesItems = false
 
         let selectorItem = NSMenuItem(title: activeProfile.isEmpty ? "Accounts" : activeProfile, action: nil, keyEquivalent: "")
@@ -940,6 +944,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        // Custom account views follow the same native highlight state as ordinary items.
+        for menuItem in menu.items { menuItem.view?.needsDisplay = true }
+    }
+
     private func makeItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
@@ -951,6 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func accountsSubmenu(profiles: [String], activeProfile: String) -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
         menu.autoenablesItems = false
         menu.minimumWidth = MenuLayout.contentWidth
         let alternatives = profiles.filter { $0 != activeProfile }
