@@ -134,66 +134,6 @@ private struct ProfileTabItem {
     let isActive: Bool
 }
 
-private final class MenuHeaderView: NSView {
-    private let titleText: String
-    private static let menuWidth: CGFloat = 280
-
-    override var isFlipped: Bool { true }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.menuWidth, height: 34)
-    }
-
-    init(icon: NSImage?, title: String) {
-        self.titleText = title
-        super.init(frame: NSRect(origin: .zero, size: NSSize(width: Self.menuWidth, height: 34)))
-
-        if let icon {
-            let imageView = NSImageView(frame: NSRect(x: 16, y: 9, width: 16, height: 16))
-            imageView.image = icon
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageView.contentTintColor = .labelColor
-            imageView.setAccessibilityElement(false)
-            addSubview(imageView)
-        }
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        let attributes = textAttributes(
-            font: .systemFont(ofSize: 12, weight: .medium),
-            color: .labelColor
-        )
-        let attributedTitle = NSAttributedString(string: titleText, attributes: attributes)
-        let textSize = attributedTitle.size()
-        let textY = max(0, (bounds.height - textSize.height) / 2)
-        attributedTitle.draw(at: NSPoint(x: 36, y: textY))
-    }
-
-    private func textAttributes(font: NSFont, color: NSColor) -> [NSAttributedString.Key: Any] {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineBreakMode = .byTruncatingTail
-        return [
-            .font: font,
-            .foregroundColor: color,
-            .paragraphStyle: paragraphStyle
-        ]
-    }
-
-    private func drawText(_ text: String, in rect: NSRect, attributes: [NSAttributedString.Key: Any]) {
-        (text as NSString).draw(
-            with: rect,
-            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-            attributes: attributes
-        )
-    }
-}
-
 private final class PlainTextButton: NSButton {
     private let textColor: NSColor
 
@@ -384,6 +324,7 @@ private final class AddAccountButton: NSButton {
 private final class ProfileTabsMenuView: NSView {
     private static let menuWidth: CGFloat = 280
     private static let horizontalPadding: CGFloat = 16
+    private static let topPadding = horizontalPadding
     private static let tabWidth: CGFloat = 64
     private static let addButtonWidth: CGFloat = 40
     private static let gap: CGFloat = 6
@@ -391,17 +332,17 @@ private final class ProfileTabsMenuView: NSView {
     override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.menuWidth, height: 50)
+        NSSize(width: Self.menuWidth, height: Self.topPadding + 50)
     }
 
     init(items: [ProfileTabItem], target: AnyObject?, switchAction: Selector, addAction: Selector) {
-        super.init(frame: NSRect(origin: .zero, size: NSSize(width: Self.menuWidth, height: 50)))
+        super.init(frame: NSRect(origin: .zero, size: NSSize(width: Self.menuWidth, height: Self.topPadding + 50)))
 
         var x = Self.horizontalPadding
         for item in items {
             let button = ProfileTabButton(
                 item: item,
-                frame: NSRect(x: x, y: 0, width: Self.tabWidth, height: 40),
+                frame: NSRect(x: x, y: Self.topPadding, width: Self.tabWidth, height: 40),
                 target: target,
                 action: item.isActive ? nil : switchAction
             )
@@ -409,7 +350,7 @@ private final class ProfileTabsMenuView: NSView {
             x += Self.tabWidth + Self.gap
         }
 
-        let addButton = AddAccountButton(frame: NSRect(x: x, y: 0, width: Self.addButtonWidth, height: 40))
+        let addButton = AddAccountButton(frame: NSRect(x: x, y: Self.topPadding, width: Self.addButtonWidth, height: 40))
         addButton.target = target
         addButton.action = addAction
         addSubview(addButton)
@@ -981,8 +922,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let active = activeProfile()
         let profiles = profileNames()
 
-        addCustomView(MenuHeaderView(icon: statusIcon(size: 16), title: "CodeX Account Switcher"), to: menu)
-
         if profiles.count > 3 {
             addAccountsOverflowItem(to: menu, profiles: profiles, activeProfile: active)
         } else {
@@ -1004,7 +943,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "Open Profiles Folder", action: #selector(openProfilesFolder), keyEquivalent: "o"))
         menu.addItem(.separator())
-        menu.addItem(makeItem(title: "Quit Switch", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(makeItem(title: "About", action: #selector(showAbout)))
+        menu.addItem(makeItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
 
         statusItem.menu = menu
         updateStatusBarTitle(activeProfile: active)
@@ -1143,6 +1083,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openProfilesFolder() {
         _ = run(["open-folder"])
+    }
+
+    @objc private func showAbout() {
+        statusItem.menu?.cancelTracking()
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        let description = NSAttributedString(
+            string: "A local-first macOS menu bar app for switching between Codex accounts.\n\nSaved account profiles stay on your Mac.",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        NSApplication.shared.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Codex Account Switcher",
+            .credits: description
+        ])
     }
 
     @objc private func openCodex() {
