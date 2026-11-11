@@ -34,6 +34,7 @@ It is useful when you regularly move between personal, work, or team Codex accou
 - Restore `~/.codex/auth.json` for Codex CLI
 - Restore `~/Library/Application Support/Codex` for Codex Desktop
 - Show each saved profile's available Codex usage windows from the official Codex usage endpoint
+- Show the subscription plan below each account name when provided by the usage endpoint
 - Keep all profile data on your machine
 
 ## Project Structure

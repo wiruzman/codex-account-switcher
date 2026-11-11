@@ -81,10 +81,12 @@ struct AdditionalRateLimitResponse: Decodable {
 }
 
 struct UsageResponse: Decodable {
+    let planType: String?
     let rateLimit: RateLimitResponse?
     let additionalRateLimits: [AdditionalRateLimitResponse]?
 
     enum CodingKeys: String, CodingKey {
+        case planType = "plan_type"
         case rateLimit = "rate_limit"
         case additionalRateLimits = "additional_rate_limits"
     }
@@ -114,6 +116,23 @@ struct UsageSnapshot: Codable {
     // Optional preserves compatibility with usage caches written by older app versions.
     let additional: [UsageWindowSnapshot]?
     let error: String?
+    // Optional so existing usage caches remain readable.
+    var planType: String? = nil
+
+    var planName: String? {
+        guard let plan = planType?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !plan.isEmpty else { return nil }
+        switch plan.lowercased() {
+        case "free": return "Free"
+        case "go": return "Go"
+        case "plus": return "Plus"
+        case "pro": return "Pro"
+        case "team", "business": return "Business"
+        case "enterprise": return "Enterprise"
+        case "edu": return "Edu"
+        default: return plan.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
 
     var windows: [UsageWindowSnapshot] {
         [primary, secondary].compactMap { $0 } + (additional ?? [])
@@ -198,6 +217,7 @@ private func makeNativeMenuHighlight(frame: NSRect) -> NSVisualEffectView {
 // caret, selection, accessibility and keyboard navigation.
 private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
     var activeProfile = ""
+    var planName: String?
     weak var menuItem: NSMenuItem?
     var titleColumnWidth: CGFloat = MenuLayout.contentWidth
 
@@ -234,11 +254,31 @@ private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
             .paragraphStyle: paragraph
         ]
         let nameHeight = NSAttributedString(string: name, attributes: nameAttributes).size().height
+        let subtitleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: secondaryColor,
+            .paragraphStyle: paragraph
+        ]
+        let subtitleHeight = planName.map { NSAttributedString(string: $0, attributes: subtitleAttributes).size().height } ?? 0
+        let contentHeight = nameHeight + (planName == nil ? 0 : MenuLayout.detailGap + subtitleHeight)
+        let textBottom = cellFrame.midY - contentHeight / 2
+        let textWidth = cellFrame.width - (activeProfile.isEmpty ? 0 : 70)
+        // Native menu views use a downward Y axis; image contexts may use an
+        // upward one. Keep the name visually above the plan in either case.
+        let isFlipped = controlView?.isFlipped ?? NSGraphicsContext.current?.isFlipped ?? false
+        let nameY = isFlipped ? textBottom : textBottom + contentHeight - nameHeight
+        let subtitleY = isFlipped ? textBottom + nameHeight + MenuLayout.detailGap : textBottom
         (name as NSString).draw(
-            in: NSRect(x: cellFrame.minX, y: cellFrame.midY - nameHeight / 2,
-                       width: cellFrame.width - (activeProfile.isEmpty ? 0 : 70), height: nameHeight),
+            in: NSRect(x: cellFrame.minX, y: nameY,
+                       width: textWidth, height: nameHeight),
             withAttributes: nameAttributes
         )
+        if let planName {
+            (planName as NSString).draw(
+                in: NSRect(x: cellFrame.minX, y: subtitleY, width: textWidth, height: subtitleHeight),
+                withAttributes: subtitleAttributes
+            )
+        }
 
         if !activeProfile.isEmpty {
             let attributes: [NSAttributedString.Key: Any] = [
@@ -663,7 +703,8 @@ final class UsageFetcher {
                     primary: primary,
                     secondary: secondary,
                     additional: additional,
-                    error: nil
+                    error: nil,
+                    planType: usage.planType
                 )))
             } catch {
                 completion(.failure("Could not parse usage"))
@@ -961,6 +1002,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let attachment = NSTextAttachment()
         let cell = AccountTitleAttachmentCell(textCell: profile)
         cell.activeProfile = profile
+        cell.planName = usageByProfile[profile]?.planName
         cell.menuItem = item
         cell.titleColumnWidth = width
         attachment.attachmentCell = cell
@@ -970,6 +1012,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Retain a plain title for accessibility and native type-select.
         item.title = profile.isEmpty ? "Accounts" : profile
         item.toolTip = profile.isEmpty ? "Accounts" : "Active account: \(profile)"
+        if let planName = cell.planName {
+            item.toolTip = "Active account: \(profile)\n\(planName)"
+            item.setAccessibilityValue(planName)
+        }
     }
 
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
@@ -995,7 +1041,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.minimumWidth = MenuLayout.contentWidth
         let alternatives = profiles.filter { $0 != activeProfile }
         for profile in alternatives {
-            let details = accountUsageDetails(profile)
+            let details = (usageByProfile[profile]?.planName.map { [$0] } ?? []) + accountUsageDetails(profile)
             let item = NSMenuItem(title: profile, action: #selector(switchProfile(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = profile
@@ -1199,12 +1245,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var updated: [String: UsageSnapshot] = [:]
         let lock = NSLock()
         let active = activeProfile()
+        let previousUsage = usageByProfile
 
         for profile in profiles {
             group.enter()
             let authURL = usageAuthURL(profile: profile, activeProfile: active)
             usageFetcher.fetch(authURL: authURL) { snapshot in
                 lock.lock()
+                var snapshot = snapshot
+                // Keep the last known plan if a refresh fails or omits it.
+                snapshot.planType = snapshot.planType ?? previousUsage[profile]?.planType
                 updated[profile] = snapshot
                 lock.unlock()
                 group.leave()

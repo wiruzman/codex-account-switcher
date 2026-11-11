@@ -11,8 +11,52 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Compile in one source file so private UI helpers remain private in the app.
 CHECKS = r'''
+private final class AccountTitlePreview: NSView {
+    let drawsFlipped: Bool
+    let titleCell = AccountTitleAttachmentCell(textCell: "personal")
+
+    init(flipped: Bool) {
+        self.drawsFlipped = flipped
+        super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 48))
+        appearance = NSAppearance(named: .aqua)
+        titleCell.activeProfile = "personal"
+        titleCell.planName = "Pro"
+    }
+
+    required init?(coder: NSCoder) { nil }
+    override var isFlipped: Bool { drawsFlipped }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.setFill()
+        bounds.fill()
+        titleCell.draw(withFrame: NSRect(x: 16, y: 4, width: 248, height: 40), in: self)
+    }
+}
+
 extension AppDelegate {
     func checkAccountMenu() {
+        // Render both coordinate systems: the longer account name must occupy
+        // the top line, with the shorter plan underneath, including native menus.
+        for flipped in [false, true] {
+            let preview = AccountTitlePreview(flipped: flipped)
+            let bitmap = preview.bitmapImageRepForCachingDisplay(in: preview.bounds)!
+            preview.cacheDisplay(in: preview.bounds, to: bitmap)
+            var upperInk = 0
+            var lowerInk = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 16..<(min(100, bitmap.pixelsWide)) {
+                    let color = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
+                    if color.redComponent < 0.8 {
+                        if y < bitmap.pixelsHigh / 2 { upperInk += 1 } else { lowerInk += 1 }
+                    }
+                }
+            }
+            assert(upperInk > lowerInk, "The account name must appear above its plan (flipped: \(flipped))")
+            if let path = ProcessInfo.processInfo.environment["PLAN_PREVIEW_PATH"], flipped {
+                try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+            }
+        }
+
         let now = Date().timeIntervalSince1970
         let session = UsageWindowSnapshot(label: nil, usedPercent: 6, remainingPercent: 94,
             resetAt: now + 15150, windowSeconds: 18000)
@@ -21,7 +65,9 @@ extension AppDelegate {
         let extra = UsageWindowSnapshot(label: "Review", usedPercent: 10, remainingPercent: 90,
             resetAt: nil, windowSeconds: 604800)
         usageByProfile["work"] = UsageSnapshot(fetchedAt: Date(), primary: session,
-            secondary: week, additional: [extra], error: nil)
+            secondary: week, additional: [extra], error: nil, planType: "business")
+        usageByProfile["personal"] = UsageSnapshot(fetchedAt: Date(), primary: session,
+            secondary: week, additional: nil, error: nil, planType: "pro")
         usageByProfile["expired"] = UsageSnapshot(fetchedAt: Date(), primary: nil,
             secondary: nil, additional: nil, error: "Sign in to Codex again")
 
@@ -43,6 +89,8 @@ extension AppDelegate {
             assert(accountItem.view == nil, "AppKit must draw the native submenu caret")
             let attachment = accountItem.attributedTitle?.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
             assert(attachment?.attachmentCell is AccountTitleAttachmentCell, "The native row must retain the styled account title")
+            assert((attachment?.attachmentCell as? AccountTitleAttachmentCell)?.planName == "Pro")
+            assert(accountItem.accessibilityValue() as? String == "Pro")
             assert(main.size.width == 280, "The native caret must not widen the menu")
             let choices = menu.items.filter { !$0.isHidden && !$0.isSeparatorItem }
             assert(choices.map(\.title) == profiles.filter { $0 != "personal" } + ["Add account"])
@@ -62,7 +110,13 @@ extension AppDelegate {
             for item in choices.dropLast() {
                 assert(item.representedObject as? String == item.title)
                 assert(item.action == #selector(switchProfile(_:)))
-                assert(item.view?.accessibilityValue() as? String == accountUsageDetails(item.title).joined(separator: ", "))
+                let plan = usageByProfile[item.title]?.planName.map { [$0] } ?? []
+                assert(item.view?.accessibilityValue() as? String == (plan + accountUsageDetails(item.title)).joined(separator: ", "))
+                if item.title == "work" {
+                    let labels = item.view!.subviews.compactMap { $0 as? NSTextField }
+                    assert(labels[0].stringValue == "work" && labels[1].stringValue == "Business")
+                    assert(labels[1].frame.minY >= labels[0].frame.maxY)
+                }
                 assert(item.view?.acceptsFirstResponder == false, "Native menus must own arrow-key navigation")
             }
             let folder = main.item(withTitle: "Open Profiles Folder")!
@@ -75,9 +129,26 @@ extension AppDelegate {
         let empty = emptyMain.items[1].submenu!
         assert(emptyMain.items[1].view == nil)
         assert(emptyMain.items[1].title == "Accounts")
+        let emptyAttachment = emptyMain.items[1].attributedTitle?.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        assert((emptyAttachment?.attachmentCell as? AccountTitleAttachmentCell)?.planName == nil)
         assert(empty.items.filter { !$0.isHidden }.map(\.title) == ["Add account"])
         let orphan = accountsSubmenu(profiles: ["work"], activeProfile: "unsaved")
         assert(orphan.items.filter { !$0.isSeparatorItem }.map(\.title) == ["work", "Add account"])
+
+        // Plan metadata must not invalidate caches written before this feature.
+        let oldCache = Data(#"{"fetchedAt":0,"primary":null,"secondary":null,"error":null}"#.utf8)
+        let oldSnapshot = try! JSONDecoder().decode(UsageSnapshot.self, from: oldCache)
+        assert(oldSnapshot.planName == nil)
+        let usage = try! JSONDecoder().decode(UsageResponse.self, from: Data(#"{"plan_type":"plus"}"#.utf8))
+        assert(usage.planType == "plus")
+        let restored = try! JSONDecoder().decode(UsageSnapshot.self,
+            from: JSONEncoder().encode(usageByProfile["work"]!))
+        assert(restored.planName == "Business")
+        for (raw, expected) in [("team", "Business"), ("enterprise", "Enterprise"), ("new_plan", "New Plan"), (" ", nil)] as [(String, String?)] {
+            var snapshot = oldSnapshot
+            snapshot.planType = raw
+            assert(snapshot.planName == expected)
+        }
 
         print("Account dropdown checks passed")
     }
