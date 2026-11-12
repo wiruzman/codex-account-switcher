@@ -15,12 +15,13 @@ private final class AccountTitlePreview: NSView {
     let drawsFlipped: Bool
     let titleCell = AccountTitleAttachmentCell(textCell: "personal")
 
-    init(flipped: Bool) {
+    init(flipped: Bool, menuItem: NSMenuItem? = nil) {
         self.drawsFlipped = flipped
-        super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 48))
+        super.init(frame: NSRect(x: 0, y: 0, width: menuItem?.menu?.size.width ?? 280, height: 48))
         appearance = NSAppearance(named: .aqua)
         titleCell.activeProfile = "personal"
         titleCell.planName = "Pro"
+        titleCell.menuItem = menuItem
     }
 
     required init?(coder: NSCoder) { nil }
@@ -124,6 +125,37 @@ extension AppDelegate {
             let quit = main.item(withTitle: "Quit")!
             assert(quit.view == nil && quit.keyEquivalent == "q")
             assert(quit.keyEquivalentModifierMask == [.command])
+        }
+
+        // Error text controls the native menu width. Both the account backdrop
+        // and its trailing badge must follow that width, even for long errors.
+        for error in ["The Internet connection appears to be offline.",
+                      "The request failed: " + String(repeating: "connection unavailable ", count: 3)] {
+            usageByProfile["personal"] = UsageSnapshot(fetchedAt: Date(), primary: nil,
+                secondary: nil, additional: nil, error: error, planType: "pro")
+            let main = makeMenu(profiles: ["personal", "work"], activeProfile: "personal")
+            assert(main.size.width > MenuLayout.width, "The fixture must widen the native menu")
+            for flipped in [false, true] {
+                let preview = AccountTitlePreview(flipped: flipped, menuItem: main.items[1])
+                let bitmap = preview.bitmapImageRepForCachingDisplay(in: preview.bounds)!
+                preview.cacheDisplay(in: preview.bounds, to: bitmap)
+                let scale = CGFloat(bitmap.pixelsWide) / preview.bounds.width
+                let backdrop = bitmap.colorAt(x: bitmap.pixelsWide - Int(8 * scale),
+                                              y: bitmap.pixelsHigh / 2)!.usingColorSpace(.deviceRGB)!
+                assert(backdrop.redComponent < 0.98, "The backdrop must reach the expanded menu's trailing inset")
+                var badgeInk = 0
+                for y in 0..<bitmap.pixelsHigh {
+                    for x in (bitmap.pixelsWide - Int(100 * scale))..<(bitmap.pixelsWide - Int(24 * scale)) {
+                        let color = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
+                        if color.redComponent < 0.8 { badgeInk += 1 }
+                    }
+                }
+                assert(badgeInk > 0, "Active must stay near the expanded menu's trailing edge")
+                if let path = ProcessInfo.processInfo.environment["OFFLINE_PREVIEW_PATH"], flipped,
+                   error == "The Internet connection appears to be offline." {
+                    try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+                }
+            }
         }
         let emptyMain = makeMenu(profiles: [], activeProfile: "")
         let empty = emptyMain.items[1].submenu!

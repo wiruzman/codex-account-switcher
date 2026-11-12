@@ -230,8 +230,11 @@ private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
     }
 
     override func draw(withFrame titleFrame: NSRect, in controlView: NSView?) {
+        // Status messages can widen the native menu beyond its minimum width.
+        let menuWidth = menuItem?.menu?.size.width ?? MenuLayout.width
         let cellFrame = NSRect(x: titleFrame.minX, y: titleFrame.minY,
-                               width: MenuLayout.contentWidth, height: titleFrame.height)
+                               width: menuWidth - MenuLayout.horizontalPadding * 2,
+                               height: titleFrame.height)
         let isHighlighted = menuItem?.isHighlighted == true
         let textColor = isHighlighted ? NSColor.selectedMenuItemTextColor : NSColor.labelColor
         let secondaryColor = isHighlighted ? textColor.withAlphaComponent(0.85) : NSColor.secondaryLabelColor
@@ -241,7 +244,7 @@ private final class AccountTitleAttachmentCell: NSTextAttachmentCell {
             // standard menu title inset rather than padding it inside a box.
             let backdrop = NSRect(x: cellFrame.minX - MenuLayout.horizontalPadding + 5,
                                   y: cellFrame.minY - 3,
-                                  width: MenuLayout.width - 10, height: cellFrame.height + 6)
+                                  width: menuWidth - 10, height: cellFrame.height + 6)
             NSBezierPath(roundedRect: backdrop, xRadius: 6, yRadius: 6).fill()
         }
 
@@ -343,7 +346,6 @@ private final class AccountMenuItemView: NSView {
             y += detailHeights[index] + MenuLayout.detailGap
         }
 
-        toolTip = ([title] + details).joined(separator: "\n")
         setAccessibilityElement(true)
         setAccessibilityRole(.menuItem)
         setAccessibilityLabel(title)
@@ -1011,9 +1013,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.attributedTitle = title
         // Retain a plain title for accessibility and native type-select.
         item.title = profile.isEmpty ? "Accounts" : profile
-        item.toolTip = profile.isEmpty ? "Accounts" : "Active account: \(profile)"
         if let planName = cell.planName {
-            item.toolTip = "Active account: \(profile)\n\(planName)"
             item.setAccessibilityValue(planName)
         }
     }
